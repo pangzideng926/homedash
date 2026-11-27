@@ -67,7 +67,7 @@ export function DownloaderDetailPage() {
   const secondaryStats = isQb ? (data?.byCategory ?? []) : (data?.byLabel ?? []);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="flex items-center">
         <Link
           to="/seeding"
@@ -224,7 +224,7 @@ export function DownloaderDetailPage() {
             title={`进行中的任务（共 ${data.activeTotal ?? data.activeTasks?.length ?? 0} 个）`}
             subtitle="仅展示正在下载、速度大于 0 的做种或出错任务（只读，按出错与速度排序）"
             actions={
-              <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
+              <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-lg bg-muted p-1">
                 {ACTIVE_LIMIT_OPTIONS.map((limitOption) => (
                   <Button
                     key={limitOption}
@@ -313,7 +313,7 @@ export function DownloaderDetailPage() {
             title="做种统计明细"
             subtitle={`按 Tracker 域名或${secondaryColumnName}统计做种数与总体积`}
             actions={
-              <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
+              <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-lg bg-muted p-1">
                 <Button
                   type="button"
                   size="sm"

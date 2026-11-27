@@ -268,8 +268,8 @@ describe('NAS 接口与缓存（GET /api/nas/status）', () => {
     expect(body1.cached).toBe(false);
     expect(sshExecutor).toHaveBeenCalledTimes(1);
 
-    // 10 秒内命中缓存
-    nowMs += 10_000;
+    // 59 秒内仍在 >=60 秒下限缓存期内，命中缓存
+    nowMs += 59_000;
     const res2 = await app.request('/api/nas/status', { headers: { Cookie: cookie } });
     const body2 = (await res2.json()) as NasStatusResponse;
     expect(body2.cached).toBe(true);
@@ -280,5 +280,65 @@ describe('NAS 接口与缓存（GET /api/nas/status）', () => {
     const body3 = (await res3.json()) as NasStatusResponse;
     expect(body3.cached).toBe(false);
     expect(sshExecutor).toHaveBeenCalledTimes(2);
+
+    // 超过 60 秒后缓存过期重采
+    nowMs += 61_000;
+    const res4 = await app.request('/api/nas/status', { headers: { Cookie: cookie } });
+    const body4 = (await res4.json()) as NasStatusResponse;
+    expect(body4.cached).toBe(false);
+    expect(sshExecutor).toHaveBeenCalledTimes(3);
+  });
+
+  it('NAS_CACHE_SECONDS=0 时仍至少缓存 60 秒且并发请求复用同一次 SSH', async () => {
+    const config = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      NAS_SSH_HOST: '192.0.2.10',
+      NAS_SSH_PORT: '22',
+      NAS_SSH_USER: 'demo',
+      NAS_SSH_KEY_PATH: './secrets/test-nas-key',
+      NAS_CACHE_SECONDS: '0',
+    });
+
+    let nowMs = new Date('2026-11-27T08:00:00.000Z').getTime();
+    let releaseExec!: (value: { code: number; stdout: string; stderr: string }) => void;
+    const sshExecutor = vi.fn().mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseExec = resolve;
+        }),
+    );
+    const readPrivateKey = vi.fn().mockResolvedValue('test-private-key-content');
+
+    const app = createApp(config, database.db, {
+      now: () => nowMs,
+      sshExecutor,
+      readPrivateKey,
+    });
+
+    const loginRes = await app.request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: TEST_USERNAME, password: TEST_PASSWORD }),
+    });
+    const cookie = extractCookiePair(loginRes.headers.get('set-cookie'));
+
+    const p1 = app.request('/api/nas/status', { headers: { Cookie: cookie } });
+    const p2 = app.request('/api/nas/status', { headers: { Cookie: cookie } });
+    await vi.waitFor(() => expect(sshExecutor).toHaveBeenCalledTimes(1));
+    releaseExec({ code: 0, stdout: SAMPLE_NAS_STDOUT, stderr: '' });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(((await r1.json()) as NasStatusResponse).online).toBe(true);
+    expect(((await r2.json()) as NasStatusResponse).online).toBe(true);
+    expect(sshExecutor).toHaveBeenCalledTimes(1);
+
+    nowMs += 59_000;
+    const cachedRes = await app.request('/api/nas/status', { headers: { Cookie: cookie } });
+    expect(((await cachedRes.json()) as NasStatusResponse).cached).toBe(true);
+    expect(sshExecutor).toHaveBeenCalledTimes(1);
   });
 });

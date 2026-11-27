@@ -25,9 +25,9 @@ export function DownloaderInstancesSection({
   mock,
 }: DownloaderInstancesSectionProps) {
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* 汇总条 */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-xs">
+      <div className="flex min-w-0 flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-xs">
         <StatusBadge
           status={
             totals.onlineInstances === totals.totalInstances
@@ -49,7 +49,9 @@ export function DownloaderInstancesSection({
         </span>
         <span className="text-muted-foreground">做种 {totals.counts.seeding}</span>
         <span className="text-muted-foreground">总体积 {formatBytes(totals.totalSize)}</span>
-        <span className="ml-auto text-muted-foreground">最近更新：{formatDateTime(checkedAt)}</span>
+        <span className="text-muted-foreground sm:ml-auto">
+          最近更新：{formatDateTime(checkedAt)}
+        </span>
       </div>
 
       {/* 实例卡片网格 */}
@@ -71,9 +73,9 @@ export function DownloaderInstancesSection({
                 className="block rounded-t-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 space-y-1.5">
-                      <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <DownloaderTypeBadge type={inst.type} />
                         <CardTitle className="truncate text-base">{inst.name}</CardTitle>
                       </div>
@@ -88,7 +90,7 @@ export function DownloaderInstancesSection({
                         ) : null}
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex max-w-full flex-wrap items-center gap-1.5">
                       <StatusBadge status={inst.online ? 'online' : 'offline'} />
                       <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
                     </div>
@@ -174,9 +176,9 @@ export function DownloaderInstancesSection({
                               key={`${task.name}-${idx}`}
                               className="space-y-1 rounded-md bg-muted/30 px-2.5 py-2 text-xs"
                             >
-                              <div className="flex items-center justify-between gap-2">
+                              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                                 <span
-                                  className="min-w-0 truncate font-medium text-foreground"
+                                  className="min-w-0 flex-1 truncate font-medium text-foreground"
                                   title={task.name}
                                 >
                                   {task.name}
@@ -219,7 +221,7 @@ export function DownloaderInstancesSection({
                   </div>
                 ) : null}
 
-                <div className="flex items-center justify-between border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
                   <span>刷新时间：{formatDateTime(inst.checkedAt)}</span>
                   <span>{inst.cached ? '缓存命中' : '实时采集'}</span>
                 </div>

@@ -16,6 +16,7 @@ import {
   parseLinuxDeviceOutput,
   parseMacosDeviceOutput,
   parseWindowsDeviceOutput,
+  resolveEffectiveCacheSeconds,
   SshCollectorError,
   UNIX_OS_PROBE_COMMAND,
   WINDOWS_OS_PROBE_COMMAND,
@@ -677,13 +678,95 @@ describe('多设备识别、并行采集、缓存复用与测试接口（mock �
     expect(macCalls).toBe(1);
     expect(failCalls).toBe(1);
 
-    // 11 秒后：失败冷却（10s）已过期会重采失败设备，而成功设备（30s）仍命中缓存
+    // 11 秒后：失败冷却（10s）已过期会重采失败设备，而成功设备（>=60s）仍命中缓存
     currentTime += 6_000;
     const afterFailureCooldown = await svc.getAllStatuses();
     expect(afterFailureCooldown.devices[0]?.cached).toBe(true);
     expect(afterFailureCooldown.devices[1]?.cached).toBe(false);
     expect(macCalls).toBe(1);
     expect(failCalls).toBe(2);
+  });
+
+  it('DEVICE_CACHE_SECONDS=0/30 与 resolveEffectiveCacheSeconds 均下限钳制 >= 60 秒，支持 refresh=1 强制刷新与单设备并发去重', async () => {
+    writeDevicesFile([
+      {
+        id: 'mac-1',
+        name: 'Mac mini',
+        host: 'demo-mac.local',
+        port: 22,
+        user: 'demo',
+        keyPath: './secrets/k1',
+        os: 'macos',
+      },
+    ]);
+
+    // 手工构造低于 60 的配置，resolveEffectiveCacheSeconds 仍应钳制为 60
+    const lowDevicesConfig = makeConfig({ DEVICE_CACHE_SECONDS: '120' });
+    const manualLowConfig = {
+      ...lowDevicesConfig,
+      devices: {
+        ...lowDevicesConfig.devices!,
+        DEVICE_CACHE_SECONDS: 15,
+      },
+    };
+    expect(resolveEffectiveCacheSeconds(manualLowConfig)).toBe(60);
+    expect(resolveEffectiveCacheSeconds(makeConfig())).toBe(60);
+
+    let currentTime = Date.parse('2026-11-27T08:00:00.000Z');
+    const executor = vi.fn<SshCommandExecutor>(async () => ({
+      code: 0,
+      stdout: SAMPLE_MACOS_STDOUT,
+      stderr: '',
+    }));
+
+    const app = createApp(makeConfig({ DEVICE_CACHE_SECONDS: '0' }), database.db, {
+      now: () => currentTime,
+      sshExecutor: executor,
+      readPrivateKey: async () => TEST_KEY_CONTENT,
+    });
+    const cookie = await loginAndGetCookie(app);
+
+    // 并发请求同一设备仅触发 1 次 SSH
+    let releaseFirst!: (res: { code: number; stdout: string; stderr: string }) => void;
+    executor.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirst = resolve;
+        }),
+    );
+    const req1 = app.request('/api/devices/status', { headers: { Cookie: cookie } });
+    const req2 = app.request('/api/devices/mac-1/status', { headers: { Cookie: cookie } });
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(1));
+    releaseFirst({ code: 0, stdout: SAMPLE_MACOS_STDOUT, stderr: '' });
+
+    const [res1, res2] = await Promise.all([req1, req2]);
+    const body1 = (await res1.json()) as DevicesStatusResponse;
+    const body2 = (await res2.json()) as DeviceStatusItem;
+    expect(body1.devices[0]?.online).toBe(true);
+    expect(body2.online).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1);
+
+    // 59 秒后仍命中 60 秒下限缓存（cached: true）
+    currentTime += 59_000;
+    const cachedRes = await app.request('/api/devices/status', { headers: { Cookie: cookie } });
+    const cachedBody = (await cachedRes.json()) as DevicesStatusResponse;
+    expect(cachedBody.devices[0]?.cached).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1);
+
+    // 超过 60 秒后缓存过期，自动重采（cached: false）
+    currentTime += 2_000;
+    const expiredRes = await app.request('/api/devices/status', { headers: { Cookie: cookie } });
+    const expiredBody = (await expiredRes.json()) as DevicesStatusResponse;
+    expect(expiredBody.devices[0]?.cached).toBe(false);
+    expect(executor).toHaveBeenCalledTimes(2);
+
+    // ?refresh=1 强制跳过缓存
+    const refreshRes = await app.request('/api/devices/status?refresh=1', {
+      headers: { Cookie: cookie },
+    });
+    const refreshBody = (await refreshRes.json()) as DevicesStatusResponse;
+    expect(refreshBody.devices[0]?.cached).toBe(false);
+    expect(executor).toHaveBeenCalledTimes(3);
   });
 
   it('HTTP 路由需登录，test 接口不保存不缓存，状态与测试接口绝不泄露私钥或 keyPath', async () => {

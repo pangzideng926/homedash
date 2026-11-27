@@ -8,7 +8,7 @@ export interface ComingSoonPageProps {
 
 export function ComingSoonPage({ title, description }: ComingSoonPageProps) {
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader title={title} description={description} />
       <EmptyState
         icon={Clock}

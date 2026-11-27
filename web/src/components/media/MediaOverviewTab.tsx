@@ -96,7 +96,7 @@ export function MediaOverviewTab({ data }: { data: MediaOverviewResponse }) {
               return (
                 <div
                   key={`${item.title}-${item.season}-${idx}`}
-                  className="group flex flex-col overflow-hidden rounded-xl border border-border bg-card p-2 transition-colors hover:border-primary/40"
+                  className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-2 transition-colors hover:border-primary/40"
                 >
                   <PosterImage src={item.posterUrl} title={item.title} />
                   <div className="mt-2 space-y-1 px-0.5">

@@ -1,5 +1,10 @@
 import fs from 'node:fs';
-import type { AppConfig, SafeLogger } from '../config/index.js';
+import {
+  clampSshStatusCacheSeconds,
+  DEFAULT_SSH_STATUS_CACHE_SECONDS,
+  type AppConfig,
+  type SafeLogger,
+} from '../config/index.js';
 import type { WindowsStatusResponse } from '../windows/service.js';
 import {
   LINUX_READONLY_STATUS_COMMAND,
@@ -75,14 +80,18 @@ function resolveEffectiveTimeoutMs(config: AppConfig): number {
   return config.devices?.DEVICE_SSH_TIMEOUT_MS ?? config.windows?.WIN_SSH_TIMEOUT_MS ?? 8000;
 }
 
-function resolveEffectiveCacheSeconds(config: AppConfig): number {
+export function resolveEffectiveCacheSeconds(config: AppConfig): number {
   if (config.keyPresence.DEVICE_CACHE_SECONDS && config.devices) {
-    return config.devices.DEVICE_CACHE_SECONDS;
+    return clampSshStatusCacheSeconds(config.devices.DEVICE_CACHE_SECONDS);
   }
   if (config.keyPresence.WIN_CACHE_SECONDS && config.windows) {
-    return config.windows.WIN_CACHE_SECONDS;
+    return clampSshStatusCacheSeconds(config.windows.WIN_CACHE_SECONDS);
   }
-  return config.devices?.DEVICE_CACHE_SECONDS ?? config.windows?.WIN_CACHE_SECONDS ?? 30;
+  return clampSshStatusCacheSeconds(
+    config.devices?.DEVICE_CACHE_SECONDS ??
+      config.windows?.WIN_CACHE_SECONDS ??
+      DEFAULT_SSH_STATUS_CACHE_SECONDS,
+  );
 }
 
 /**

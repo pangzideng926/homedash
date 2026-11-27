@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import type { AppConfig, SafeLogger } from '../config/index.js';
+import { clampSshStatusCacheSeconds, type AppConfig, type SafeLogger } from '../config/index.js';
 import { UNIX_OS_PROBE_COMMAND } from '../devices/commands.js';
 import { DeviceStatusClassifiedError } from '../devices/parsers.js';
 import { classifyDeviceError } from '../devices/service.js';
@@ -326,7 +326,7 @@ export function createNasService(
         data,
       };
 
-      const cacheTtlMs = resolved.cacheSeconds * 1000;
+      const cacheTtlMs = clampSshStatusCacheSeconds(resolved.cacheSeconds) * 1000;
       if (cacheTtlMs > 0) {
         cachedEntry = { expiresAtMs: finishedAt + cacheTtlMs, response: success };
       } else {

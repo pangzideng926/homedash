@@ -84,7 +84,7 @@ export function AdminLayout({
   }, [signOut, navigate, loginPath]);
 
   return (
-    <div className="flex min-h-screen bg-muted/30 text-foreground">
+    <div className="flex min-h-screen w-full max-w-full overflow-x-clip bg-muted/30 text-foreground">
       <Sidebar
         brand={brand}
         items={menuItems}
@@ -104,7 +104,7 @@ export function AdminLayout({
           onLogout={handleLogout}
         />
 
-        <main className="flex-1 p-4 sm:p-6">
+        <main className="min-w-0 flex-1 p-3 sm:p-6">
           <Outlet />
         </main>
       </div>

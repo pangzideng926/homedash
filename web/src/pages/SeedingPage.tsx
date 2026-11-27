@@ -26,7 +26,7 @@ export function SeedingPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="下载器"
         description="多实例下载器（qBittorrent / Transmission）只读传输速度、做种统计与异常排查。"

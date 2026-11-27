@@ -105,7 +105,7 @@ describe('配置分组校验与状态报告', () => {
       MOVIEPILOT_API_TOKEN: fakeMpToken,
     });
     expect(partialConfig.nas?.NAS_SSH_HOST).toBe('192.0.2.10');
-    expect(partialConfig.nas?.NAS_CACHE_SECONDS).toBe(30);
+    expect(partialConfig.nas?.NAS_CACHE_SECONDS).toBe(60);
     expect(partialConfig.qbittorrent?.QBIT_CACHE_SECONDS).toBe(10);
     expect(partialConfig.qbittorrent?.QBIT_TIMEOUT_MS).toBe(8000);
     expect(partialConfig.moviepilot?.MOVIEPILOT_CACHE_SECONDS).toBe(60);
@@ -181,11 +181,11 @@ describe('配置分组校验与状态报告', () => {
     expect(fullConfig.moviepilot?.MOVIEPILOT_URL).toBe('https://mp.example.com');
     expect(fullConfig.devices?.DEVICES_FILE).toBe('./secrets/devices.json');
     expect(fullConfig.devices?.DEVICE_SSH_TIMEOUT_MS).toBe(8000);
-    expect(fullConfig.devices?.DEVICE_CACHE_SECONDS).toBe(30);
+    expect(fullConfig.devices?.DEVICE_CACHE_SECONDS).toBe(60);
     expect(fullConfig.devices?.DEVICES_MOCK).toBe(false);
     expect(fullConfig.windows?.WIN_SSH_PORT).toBe(22);
     expect(fullConfig.windows?.WIN_SSH_TIMEOUT_MS).toBe(8000);
-    expect(fullConfig.windows?.WIN_CACHE_SECONDS).toBe(30);
+    expect(fullConfig.windows?.WIN_CACHE_SECONDS).toBe(60);
     expect(fullConfig.windows?.WIN_MOCK).toBe(false);
     expect(fullConfig.vps?.VPS_LIST_FILE).toBe('./secrets/vps.json');
     expect(fullConfig.vps?.VPS_READONLY).toBe(false);
@@ -249,7 +249,7 @@ describe('配置分组校验与状态报告', () => {
     expect(mockConfig.windows).toEqual({
       WIN_MOCK: true,
       WIN_SSH_TIMEOUT_MS: 5000,
-      WIN_CACHE_SECONDS: 0,
+      WIN_CACHE_SECONDS: 60,
     });
     expect(mockConfig.vps).toEqual({
       VPS_LIST_FILE: './secrets/vps.json',
@@ -401,6 +401,47 @@ describe('配置分组校验与状态报告', () => {
     expect(status.modules.media.status).toBe('configured');
     expect(status.modules.media.keys.MEDIA_CACHE_SECONDS).toBe(true);
     expect(status.modules.media.keys.MEDIA_IMAGE_HOSTS).toBe(true);
+  });
+
+  it('SSH 状态缓存时间（NAS / 家用设备 / Windows）默认 60 秒且下限钳制为 60 秒', () => {
+    const clampedZero = parseConfig({
+      ...BASE_ENV,
+      NAS_MOCK: 'true',
+      NAS_CACHE_SECONDS: '0',
+      DEVICES_MOCK: 'true',
+      DEVICE_CACHE_SECONDS: '0',
+      WIN_MOCK: 'true',
+      WIN_CACHE_SECONDS: '0',
+    });
+    expect(clampedZero.nas?.NAS_CACHE_SECONDS).toBe(60);
+    expect(clampedZero.devices?.DEVICE_CACHE_SECONDS).toBe(60);
+    expect(clampedZero.windows?.WIN_CACHE_SECONDS).toBe(60);
+
+    const clampedThirty = parseConfig({
+      ...BASE_ENV,
+      NAS_MOCK: 'true',
+      NAS_CACHE_SECONDS: '30',
+      DEVICES_MOCK: 'true',
+      DEVICE_CACHE_SECONDS: '30',
+      WIN_MOCK: 'true',
+      WIN_CACHE_SECONDS: '30',
+    });
+    expect(clampedThirty.nas?.NAS_CACHE_SECONDS).toBe(60);
+    expect(clampedThirty.devices?.DEVICE_CACHE_SECONDS).toBe(60);
+    expect(clampedThirty.windows?.WIN_CACHE_SECONDS).toBe(60);
+
+    const largerThanMin = parseConfig({
+      ...BASE_ENV,
+      NAS_MOCK: 'true',
+      NAS_CACHE_SECONDS: '120',
+      DEVICES_MOCK: 'true',
+      DEVICE_CACHE_SECONDS: '180',
+      WIN_MOCK: 'true',
+      WIN_CACHE_SECONDS: '90',
+    });
+    expect(largerThanMin.nas?.NAS_CACHE_SECONDS).toBe(120);
+    expect(largerThanMin.devices?.DEVICE_CACHE_SECONDS).toBe(180);
+    expect(largerThanMin.windows?.WIN_CACHE_SECONDS).toBe(90);
   });
 });
 

@@ -280,7 +280,7 @@ export function VpsPage() {
   const canEdit = Boolean(currentData?.configured && !currentData.error && !isReadonly);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="VPS"
         description={
@@ -557,7 +557,7 @@ export function VpsPage() {
                     }
                     actions={
                       !isReadonly ? (
-                        <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex max-w-full flex-wrap items-center gap-1">
                           {isConfirmingDelete ? (
                             <div className="inline-flex items-center gap-1">
                               <Button

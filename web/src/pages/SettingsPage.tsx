@@ -42,6 +42,13 @@ import {
   type IntegrationsViewResponse,
   type IntegrationTestResponse,
 } from '@/lib/api';
+import {
+  STATUS_REFRESH_OPTIONS,
+  parseStatusRefreshInterval,
+  readStatusRefreshInterval,
+  writeStatusRefreshInterval,
+  type StatusRefreshIntervalSeconds,
+} from '@/lib/status-refresh';
 
 type EditableIntegrationModule = 'nas' | 'moviepilot';
 
@@ -123,6 +130,8 @@ function toDownloaderInput(item: DownloaderPublicConfig): DownloaderInput {
 }
 
 export function SettingsPage() {
+  const [statusRefreshInterval, setStatusRefreshInterval] =
+    useState<StatusRefreshIntervalSeconds>(readStatusRefreshInterval);
   const [nasForm, setNasForm] = useState<NasFormState>({
     host: '',
     port: '22',
@@ -450,13 +459,19 @@ export function SettingsPage() {
     }
   };
 
+  const handleStatusRefreshIntervalChange = (rawValue: string) => {
+    const next = parseStatusRefreshInterval(rawValue);
+    setStatusRefreshInterval(next);
+    writeStatusRefreshInterval(next);
+  };
+
   const modules = statusApi.data ? Object.values(statusApi.data.modules) : [];
   const integrations = integrationsApi.data;
   const downloadersData = downloadersApi.data;
   const downloaderList = downloadersData?.downloaders ?? [];
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-8">
       <PageHeader
         title="设置"
         description="管理服务集成凭据（敏感字段经 AES-256-GCM 加密存储）并查看环境变量配置状态。"
@@ -481,15 +496,57 @@ export function SettingsPage() {
         }
       />
 
+      {/* 前端偏好设置区 */}
+      <section aria-labelledby="preferences-heading" className="min-w-0 space-y-4">
+        <div className="min-w-0">
+          <h2 id="preferences-heading" className="text-lg font-semibold text-foreground">
+            前端偏好设置
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            仅保存在当前浏览器本地，不影响服务端环境变量或集成凭据文件。
+          </p>
+        </div>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-base">自动刷新策略</CardTitle>
+              <StatusBadge status="info" label="本地浏览器偏好" showDot={false} />
+            </div>
+            <CardDescription>
+              仅作用于家用设备页、NAS 状态页及首页总览的设备与 NAS
+              区块；定时刷新优先使用服务端缓存，手动点击刷新才强制重新采集。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex min-w-0 flex-col gap-2 sm:max-w-xs">
+              <Label htmlFor="status-refresh-interval">状态刷新间隔</Label>
+              <select
+                id="status-refresh-interval"
+                value={String(statusRefreshInterval)}
+                onChange={(e) => handleStatusRefreshIntervalChange(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {STATUS_REFRESH_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={String(opt.value)}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
       {/* 集成配置区 */}
       {integrations || downloadersData || integrationsApi.error ? (
-        <section aria-labelledby="integrations-heading" className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
+        <section aria-labelledby="integrations-heading" className="min-w-0 space-y-4">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
               <h2 id="integrations-heading" className="text-lg font-semibold text-foreground">
                 集成配置
               </h2>
-              <p className="text-sm text-muted-foreground">
+              <p className="break-words text-sm text-muted-foreground">
                 密码与 API 令牌在服务端加密存储，界面仅显示“已设置”或“未设置”；若已在 .env
                 中配置则以 .env 为准。
               </p>
@@ -523,7 +580,7 @@ export function SettingsPage() {
               {/* NAS 集成卡片 */}
               <Card>
                 <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                     <CardTitle className="text-base">NAS（SSH 只读）</CardTitle>
                     <StatusBadge
                       status={integrations.modules.nas.configured ? 'configured' : 'unconfigured'}
@@ -536,7 +593,7 @@ export function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="nas-host">主机地址</Label>
                       <EnvManagedBadge source={integrations.modules.nas.fields.host.source} />
                     </div>
@@ -551,7 +608,7 @@ export function SettingsPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="nas-port">SSH 端口</Label>
                       <EnvManagedBadge source={integrations.modules.nas.fields.port.source} />
                     </div>
@@ -566,7 +623,7 @@ export function SettingsPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="nas-user">SSH 用户名</Label>
                       <EnvManagedBadge source={integrations.modules.nas.fields.user.source} />
                     </div>
@@ -581,7 +638,7 @@ export function SettingsPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="nas-keyPath">私钥路径</Label>
                       <EnvManagedBadge source={integrations.modules.nas.fields.keyPath.source} />
                     </div>
@@ -597,7 +654,7 @@ export function SettingsPage() {
 
                   <IntegrationFeedbackBanner feedback={feedback.nas} />
 
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
                     <Button
                       type="button"
                       variant="outline"
@@ -624,7 +681,7 @@ export function SettingsPage() {
               {/* MoviePilot 集成卡片 */}
               <Card>
                 <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                     <CardTitle className="text-base">MoviePilot</CardTitle>
                     <StatusBadge
                       status={
@@ -637,7 +694,7 @@ export function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="mp-url">服务地址</Label>
                       <EnvManagedBadge source={integrations.modules.moviepilot.fields.url.source} />
                     </div>
@@ -652,9 +709,9 @@ export function SettingsPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <Label htmlFor="mp-apiToken">API 令牌</Label>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <EnvManagedBadge
                           source={integrations.modules.moviepilot.fields.apiToken.source}
                         />
@@ -710,7 +767,7 @@ export function SettingsPage() {
 
                   <IntegrationFeedbackBanner feedback={feedback.moviepilot} />
 
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
                     <Button
                       type="button"
                       variant="outline"
@@ -739,8 +796,8 @@ export function SettingsPage() {
           {/* 多实例下载器配置卡片 */}
           {downloadersData ? (
             <Card>
-              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-3">
-                <div>
+              <CardHeader className="flex flex-col gap-3 space-y-0 pb-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1">
                   <CardTitle className="text-base">下载器（qBittorrent / Transmission）</CardTitle>
                   <CardDescription>
                     支持多实例只读监控与用途标签分类；密码经 AES-256-GCM 加密存储且永不回显。
@@ -751,6 +808,7 @@ export function SettingsPage() {
                   size="sm"
                   onClick={openAddDownloaderForm}
                   disabled={dlSaving || downloadersData.mock}
+                  className="self-start sm:self-auto"
                 >
                   <Plus className="size-4" aria-hidden="true" />
                   <span>新增下载器</span>
@@ -1019,13 +1077,13 @@ export function SettingsPage() {
                               </div>
                               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                 <span>{getDownloaderTypeFullName(inst.type)}</span>
-                                <span className="font-mono">{inst.url}</span>
+                                <span className="break-all font-mono">{inst.url}</span>
                                 <span>用户名：{inst.username || '（未填）'}</span>
                                 <span>密码：{inst.passwordSet ? '已设置' : '未设置'}</span>
                               </div>
                             </div>
 
-                            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                            <div className="flex max-w-full flex-wrap items-center gap-1.5">
                               <Button
                                 type="button"
                                 variant="outline"
@@ -1147,7 +1205,7 @@ export function SettingsPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {modules.map((mod) => (
               <Card key={mod.id}>
-                <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-3">
+                <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0 pb-3">
                   <CardTitle className="text-base">{mod.label}</CardTitle>
                   <StatusBadge status={mod.status} label={mod.statusLabel} />
                 </CardHeader>
@@ -1156,9 +1214,9 @@ export function SettingsPage() {
                     {Object.entries(mod.keys).map(([key, filled]) => (
                       <li
                         key={key}
-                        className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs"
+                        className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs"
                       >
-                        <code className="truncate font-mono text-foreground">{key}</code>
+                        <code className="min-w-0 truncate font-mono text-foreground">{key}</code>
                         <StatusBadge
                           status={filled ? 'success' : 'unconfigured'}
                           label={filled ? '已填' : '未填'}

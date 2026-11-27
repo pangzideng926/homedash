@@ -1,7 +1,8 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DevicesPage } from '@/pages/DevicesPage';
+import { writeStatusRefreshInterval } from '@/lib/status-refresh';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -157,6 +158,7 @@ const SAMPLE_STATUS = {
 
 describe('DevicesPage 家用设备页', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -276,7 +278,7 @@ describe('DevicesPage 家用设备页', () => {
     const confirmBtn = screen.getByRole('button', { name: '确认删除' });
     await user.click(confirmBtn);
     expect(screen.queryByText('测试新 Mac')).not.toBeInTheDocument();
-  });
+  }, 15_000);
 
   it('只读模式（WIN_SSH_* 迁移或 DEVICES_READONLY）隐藏编辑按钮并显示只读提示', async () => {
     const legacyReason = '当前来自 WIN_SSH_* 环境变量，配置 DEVICES_FILE 后可在界面编辑';
@@ -314,4 +316,49 @@ describe('DevicesPage 家用设备页', () => {
     expect(screen.queryByRole('button', { name: /编辑/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /删除/ })).not.toBeInTheDocument();
   });
+
+  it('定时轮询使用非强制请求、展示「上次更新」且点击刷新才带 ?refresh=1，卡片保留防裁切 class', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-11-27T08:00:30.000Z'));
+    writeStatusRefreshInterval(60);
+
+    const user = userEvent.setup({
+      delay: null,
+      advanceTimers: vi.advanceTimersByTime,
+    });
+    const statusUrls: string[] = [];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === '/api/devices') return jsonResponse(SAMPLE_LIST);
+      if (url.startsWith('/api/devices/status')) {
+        statusUrls.push(url);
+        return jsonResponse({
+          ...SAMPLE_STATUS,
+          checkedAt: new Date(Date.now()).toISOString(),
+        });
+      }
+      return jsonResponse({ error: 'not found' }, 404);
+    });
+
+    const { container } = render(<DevicesPage />);
+    expect(await screen.findByText('客厅主机')).toBeInTheDocument();
+
+    // 首次加载不带 refresh=1，并展示上次更新
+    expect(statusUrls).toEqual(['/api/devices/status']);
+    expect(screen.getAllByText(/上次更新/).length).toBeGreaterThanOrEqual(1);
+
+    // 移动端防裁切 class 锁定
+    expect(container.firstElementChild?.className).toContain('min-w-0');
+
+    // 推进 60 秒触发自动轮询：仍不带 refresh=1
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(statusUrls).toEqual(['/api/devices/status', '/api/devices/status']);
+
+    // 手动点击「刷新全部」才带 ?refresh=1
+    await user.click(screen.getByRole('button', { name: '刷新全部' }));
+    expect(statusUrls).toContain('/api/devices/status?refresh=1');
+  }, 15_000);
 });

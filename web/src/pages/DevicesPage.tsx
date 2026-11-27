@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApi } from '@/hooks/useApi';
+import { useStatusPolling } from '@/hooks/useStatusPolling';
 import {
   fetchDevicesList,
   fetchDevicesStatus,
@@ -48,6 +49,7 @@ import {
   type DeviceStatusItem,
   type DeviceTestResponse,
 } from '@/lib/api';
+import { broadcastStatusUpdate, formatLastUpdated } from '@/lib/status-refresh';
 import { cn } from '@/lib/utils';
 
 interface DeviceFormValues {
@@ -205,17 +207,19 @@ function buildDeviceCardModels(
 }
 
 export function DevicesPage() {
-  const fetchCombined = useCallback(async (signal: AbortSignal) => {
-    const [listRes, statusRes] = await Promise.all([
-      fetchDevicesList(signal),
-      fetchDevicesStatus({ signal }),
-    ]);
-    return { list: listRes, status: statusRes };
-  }, []);
+  const listApi = useApi(fetchDevicesList);
+  const statusFetcher = useCallback(
+    ({ refresh, signal }: { refresh: boolean; signal: AbortSignal }) =>
+      fetchDevicesStatus({ refresh, signal }),
+    [],
+  );
+  const statusPoll = useStatusPolling<DevicesStatusResponse>({
+    topic: 'devices',
+    fetcher: statusFetcher,
+    getUpdatedAt: (res) => res.checkedAt,
+  });
 
-  const { data, loading, error, refetch } = useApi(fetchCombined);
   const [localList, setLocalList] = useState<DeviceListResponse | null>(null);
-  const [localStatus, setLocalStatus] = useState<DevicesStatusResponse | null>(null);
   const [cardOverrides, setCardOverrides] = useState<Record<string, DeviceStatusItem>>({});
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Record<string, boolean>>({});
@@ -230,8 +234,10 @@ export function DevicesPage() {
   const [testResult, setTestResult] = useState<DeviceTestResponse | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const listData = localList ?? data?.list ?? null;
-  const statusData = localStatus ?? data?.status ?? null;
+  const listData = localList ?? listApi.data ?? null;
+  const statusData = statusPoll.data;
+  const loading = listApi.loading || statusPoll.loading;
+  const error = listApi.error ?? statusPoll.error;
   const isReadonly = Boolean(listData?.readonly ?? statusData?.readonly);
   const readonlyReason = listData?.readonlyReason ?? statusData?.readonlyReason;
   const configured = listData?.configured ?? statusData?.configured ?? false;
@@ -241,17 +247,17 @@ export function DevicesPage() {
 
   const cardModels = buildDeviceCardModels(listData, statusData, cardOverrides);
 
+  const handleInitialRetry = async () => {
+    await Promise.all([listApi.refetch(), statusPoll.refetch()]);
+  };
+
   const handleRefreshAll = async () => {
     setRefreshingAll(true);
     setActionError(null);
     setConfirmDeleteId(null);
     try {
-      const [nextList, nextStatus] = await Promise.all([
-        fetchDevicesList(),
-        fetchDevicesStatus({ refresh: true }),
-      ]);
+      const [nextList] = await Promise.all([fetchDevicesList(), statusPoll.refresh()]);
       setLocalList(nextList);
-      setLocalStatus(nextStatus);
       setCardOverrides({});
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '刷新设备状态失败，请稍后重试');
@@ -266,6 +272,15 @@ export function DevicesPage() {
     try {
       const updated = await fetchDeviceStatus(id, { refresh: true });
       setCardOverrides((prev) => ({ ...prev, [id]: updated }));
+      statusPoll.setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              devices: prev.devices.map((item) => (item.id === id ? updated : item)),
+            }
+          : prev,
+      );
+      broadcastStatusUpdate({ topic: 'devices', senderId: statusPoll.senderId });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '刷新设备状态失败，请稍后重试');
     } finally {
@@ -355,8 +370,7 @@ export function DevicesPage() {
       setLocalList(updatedList);
       setCardOverrides({});
       closeForm();
-      const updatedStatus = await fetchDevicesStatus({ refresh: true });
-      setLocalStatus(updatedStatus);
+      await statusPoll.refresh();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : '保存设备失败，请稍后重试');
     } finally {
@@ -375,8 +389,7 @@ export function DevicesPage() {
       setLocalList(updatedList);
       setConfirmDeleteId(null);
       setCardOverrides({});
-      const updatedStatus = await fetchDevicesStatus({ refresh: true });
-      setLocalStatus(updatedStatus);
+      await statusPoll.refresh();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '删除设备失败，请稍后重试');
     } finally {
@@ -384,15 +397,23 @@ export function DevicesPage() {
     }
   };
 
-  const isBusy = loading || refreshingAll;
+  const isBusy = loading || refreshingAll || statusPoll.refreshing;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="家用设备"
         description="家用 Windows / macOS / Linux 主机只读状态与硬件资源监控"
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-2">
+            {statusPoll.lastUpdatedAt ? (
+              <span
+                className="text-xs text-muted-foreground"
+                title={formatDateTime(statusPoll.lastUpdatedAt)}
+              >
+                {formatLastUpdated(statusPoll.lastUpdatedAt, statusPoll.nowMs)}
+              </span>
+            ) : null}
             {isReadonly ? <StatusBadge status="info" label="只读模式" showDot={false} /> : null}
             {canEdit ? (
               <Button type="button" size="sm" onClick={openAddForm} disabled={saving || isBusy}>
@@ -404,11 +425,13 @@ export function DevicesPage() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void (data ? handleRefreshAll() : refetch())}
+              onClick={() =>
+                void (listData || statusData ? handleRefreshAll() : handleInitialRetry())
+              }
               disabled={isBusy || saving}
             >
               <RotateCw className={isBusy ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
-              <span>{refreshingAll ? '刷新中...' : '刷新全部'}</span>
+              <span>{refreshingAll || statusPoll.refreshing ? '刷新中...' : '刷新全部'}</span>
             </Button>
           </div>
         }
@@ -420,7 +443,7 @@ export function DevicesPage() {
         <ErrorState
           title="获取家用设备状态失败"
           message={error.message}
-          onRetry={() => void refetch()}
+          onRetry={() => void handleInitialRetry()}
         />
       ) : !configured || configErrorCode === 'UNCONFIGURED' ? (
         <EmptyState
@@ -442,17 +465,17 @@ export function DevicesPage() {
           {isReadonly && readonlyReason ? (
             <div
               role="note"
-              className="flex items-start gap-2.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-900 dark:text-sky-200"
+              className="flex min-w-0 items-start gap-2.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm break-words text-sky-900 dark:text-sky-200"
             >
               <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-              <span>{readonlyReason}</span>
+              <span className="min-w-0 break-words">{readonlyReason}</span>
             </div>
           ) : null}
 
           {actionError ? (
             <div
               role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+              className="min-w-0 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm break-words text-destructive"
             >
               {actionError}
             </div>
@@ -668,13 +691,13 @@ export function DevicesPage() {
                       </>
                     }
                     subtitle={
-                      <span className="block truncate">
+                      <span className="block break-words sm:truncate">
                         {osVersionText}
                         {record?.note ? ` · ${record.note}` : ''}
                       </span>
                     }
                     actions={
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex max-w-full flex-wrap items-center gap-1">
                         {enabled ? (
                           <Button
                             type="button"
@@ -745,8 +768,10 @@ export function DevicesPage() {
                     }
                     footer={
                       statusItem ? (
-                        <div className="flex w-full items-center justify-between border-t border-border/60 pt-2">
-                          <span>刷新时间：{formatDateTime(statusItem.checkedAt)}</span>
+                        <div className="flex min-w-0 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border/60 pt-2">
+                          <span title={formatDateTime(statusItem.checkedAt)}>
+                            {formatLastUpdated(statusItem.checkedAt, statusPoll.nowMs)}
+                          </span>
                           <span>{statusItem.cached ? '命中缓存' : '实时采集'}</span>
                         </div>
                       ) : undefined
@@ -793,7 +818,7 @@ export function DevicesPage() {
                           <ProgressBar
                             ariaLabel={`${model.name} CPU 使用率`}
                             label={
-                              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
                                 <Cpu className="size-3.5 shrink-0" aria-hidden="true" />
                                 <span className="truncate">
                                   {statusItem.data.cpu.model}
@@ -812,7 +837,7 @@ export function DevicesPage() {
                           <ProgressBar
                             ariaLabel={`${model.name} 内存使用率`}
                             label={
-                              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                              <span className="flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
                                 <MemoryStick className="size-3.5 shrink-0" aria-hidden="true" />
                                 <span>内存</span>
                               </span>

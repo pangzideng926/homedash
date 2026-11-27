@@ -2,7 +2,13 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { type AppConfig, type ConfigKey, type SafeLogger } from '../config/index.js';
+import {
+  clampSshStatusCacheSeconds,
+  DEFAULT_SSH_STATUS_CACHE_SECONDS,
+  type AppConfig,
+  type ConfigKey,
+  type SafeLogger,
+} from '../config/index.js';
 import { resolveRepoRelativePath } from '../devices/store.js';
 import { decryptSecret, deriveIntegrationKey, encryptSecret } from './crypto.js';
 import type {
@@ -1012,7 +1018,9 @@ export function createIntegrationsStore(
         ...(port ? { port } : {}),
         ...(user ? { user } : {}),
         ...(keyPath ? { keyPath } : {}),
-        cacheSeconds: envNas?.NAS_CACHE_SECONDS ?? 30,
+        cacheSeconds: clampSshStatusCacheSeconds(
+          envNas?.NAS_CACHE_SECONDS ?? DEFAULT_SSH_STATUS_CACHE_SECONDS,
+        ),
       };
     },
 
