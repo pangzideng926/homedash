@@ -71,23 +71,107 @@ function normalizeBaseUrl(rawUrl: string): { baseUrl: string; origin: string; ba
   };
 }
 
-function extractSidFromHeaders(headers: Headers): string | null {
-  const anyHeaders = headers as Headers & { getSetCookie?: () => string[] };
-  const cookieList: string[] = [];
-  if (typeof anyHeaders.getSetCookie === 'function') {
-    cookieList.push(...anyHeaders.getSetCookie());
-  }
-  const single = headers.get('set-cookie');
-  if (single) {
-    cookieList.push(single);
-  }
+export interface QbitSessionCookie {
+  name: string;
+  value: string;
+}
 
-  for (const rawCookie of cookieList) {
-    const match = /\bSID=([^;\s,]+)/i.exec(rawCookie);
-    if (match?.[1]) {
-      return match[1];
+const QBIT_PORT_SID_COOKIE_NAME_PATTERN = /^QBT_SID_\d+$/;
+
+function isQbitSessionCookieName(name: string): boolean {
+  return name === 'SID' || QBIT_PORT_SID_COOKIE_NAME_PATTERN.test(name);
+}
+
+/**
+ * 将合并的 Set-Cookie 响应头按 cookie 边界拆分（兼容 Expires 日期中的逗号）。
+ */
+function splitSetCookieHeader(headerValue: string): string[] {
+  const cookies: string[] = [];
+  let pos = 0;
+
+  while (pos < headerValue.length) {
+    const start = pos;
+    let separatorFound = false;
+
+    while (pos < headerValue.length && !separatorFound) {
+      const commaIndex = headerValue.indexOf(',', pos);
+      if (commaIndex === -1) {
+        pos = headerValue.length;
+        break;
+      }
+
+      let cursor = commaIndex + 1;
+      while (cursor < headerValue.length && /\s/.test(headerValue.charAt(cursor))) {
+        cursor += 1;
+      }
+      const nextStart = cursor;
+
+      while (cursor < headerValue.length) {
+        const ch = headerValue.charAt(cursor);
+        if (ch === '=' || ch === ';' || ch === ',') {
+          break;
+        }
+        cursor += 1;
+      }
+
+      if (cursor < headerValue.length && headerValue.charAt(cursor) === '=') {
+        separatorFound = true;
+        pos = nextStart;
+        const chunk = headerValue.slice(start, commaIndex).trim();
+        if (chunk) {
+          cookies.push(chunk);
+        }
+      } else {
+        pos = commaIndex + 1;
+      }
+    }
+
+    if (!separatorFound) {
+      const tail = headerValue.slice(start).trim();
+      if (tail) {
+        cookies.push(tail);
+      }
+      break;
     }
   }
+
+  return cookies;
+}
+
+/**
+ * 从响应头提取 qBittorrent 会话 Cookie（兼容旧版 SID 与 5.x QBT_SID_<端口>）。
+ */
+export function extractSessionCookieFromHeaders(headers: Headers): QbitSessionCookie | null {
+  const anyHeaders = headers as Headers & { getSetCookie?: () => string[] };
+  const rawHeaders: string[] = [];
+  if (typeof anyHeaders.getSetCookie === 'function') {
+    rawHeaders.push(...anyHeaders.getSetCookie());
+  }
+  const combined = headers.get('set-cookie');
+  if (combined) {
+    rawHeaders.push(combined);
+  }
+
+  for (const rawHeader of rawHeaders) {
+    for (const rawCookie of splitSetCookieHeader(rawHeader)) {
+      const semiIndex = rawCookie.indexOf(';');
+      const nameValue = (semiIndex === -1 ? rawCookie : rawCookie.slice(0, semiIndex)).trim();
+      const eqIndex = nameValue.indexOf('=');
+      if (eqIndex <= 0) {
+        continue;
+      }
+
+      const name = nameValue.slice(0, eqIndex).trim();
+      const value = nameValue.slice(eqIndex + 1).trim();
+      if (!value || /\s/.test(value)) {
+        continue;
+      }
+      if (isQbitSessionCookieName(name)) {
+        return { name, value };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -108,11 +192,11 @@ function classifyFetchError(error: unknown): QbitClientError {
 }
 
 /**
- * 创建 qBittorrent WebUI API v2 只读客户端（支持 SID 复用与 403 自动重登一次）。
+ * 创建 qBittorrent WebUI API v2 只读客户端（支持 SID / QBT_SID_<port> 复用与 403 自动重登一次）。
  */
 export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
-  const sidCache = new Map<string, string>();
-  const inFlightLogin = new Map<string, Promise<string>>();
+  const sessionCache = new Map<string, QbitSessionCookie>();
+  const inFlightLogin = new Map<string, Promise<QbitSessionCookie>>();
 
   function buildSessionKey(cfg: QbitClientConfig): string {
     const scope = cfg.instanceId ?? 'default';
@@ -135,7 +219,7 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
     }
   }
 
-  async function performLogin(cfg: QbitClientConfig): Promise<string> {
+  async function performLogin(cfg: QbitClientConfig): Promise<QbitSessionCookie> {
     const sessionKey = buildSessionKey(cfg);
     const existingPromise = inFlightLogin.get(sessionKey);
     if (existingPromise) {
@@ -167,7 +251,7 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
 
       const bodyText = (await response.text()).trim();
       if (response.status === 403 && bodyText.toLowerCase().includes('banned')) {
-        sidCache.delete(sessionKey);
+        sessionCache.delete(sessionKey);
         throw new QbitClientError(
           'IP_BANNED',
           '当前 IP 已被 qBittorrent 封禁，请稍后再试或在 WebUI 中解除封禁',
@@ -175,25 +259,26 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
       }
 
       if (response.status === 401 || response.status === 403 || bodyText === 'Fails.') {
-        sidCache.delete(sessionKey);
+        sessionCache.delete(sessionKey);
         throw new QbitClientError('AUTH_FAILED', 'qBittorrent 认证失败，请检查用户名或密码');
       }
 
       if (!response.ok) {
-        sidCache.delete(sessionKey);
+        sessionCache.delete(sessionKey);
         throw new QbitClientError(
           'API_ERROR',
           `qBittorrent 登录接口返回异常状态码 ${response.status}`,
         );
       }
 
-      const sid = extractSidFromHeaders(response.headers);
-      if (!sid) {
+      const sessionCookie = extractSessionCookieFromHeaders(response.headers);
+      if (!sessionCookie) {
+        sessionCache.delete(sessionKey);
         throw new QbitClientError('AUTH_FAILED', 'qBittorrent 登录未返回有效会话 Cookie');
       }
 
-      sidCache.set(sessionKey, sid);
-      return sid;
+      sessionCache.set(sessionKey, sessionCookie);
+      return sessionCookie;
     })().finally(() => {
       inFlightLogin.delete(sessionKey);
     });
@@ -202,9 +287,9 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
     return promise;
   }
 
-  async function ensureSid(cfg: QbitClientConfig): Promise<string> {
+  async function ensureSessionCookie(cfg: QbitClientConfig): Promise<QbitSessionCookie> {
     const sessionKey = buildSessionKey(cfg);
-    const cached = sidCache.get(sessionKey);
+    const cached = sessionCache.get(sessionKey);
     if (cached) {
       return cached;
     }
@@ -216,7 +301,7 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
     assertQbitRequestAllowed('GET', apiPath);
 
     const sessionKey = buildSessionKey(cfg);
-    let sid = await ensureSid(cfg);
+    let session = await ensureSessionCookie(cfg);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const response = await fetchWithTimeout(
@@ -224,7 +309,7 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
         {
           method: 'GET',
           headers: {
-            Cookie: `SID=${sid}`,
+            Cookie: `${session.name}=${session.value}`,
             Referer: baseUrl,
             Origin: origin,
           },
@@ -233,13 +318,13 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
       );
 
       if (response.status === 403 && attempt === 0) {
-        sidCache.delete(sessionKey);
-        sid = await performLogin(cfg);
+        sessionCache.delete(sessionKey);
+        session = await performLogin(cfg);
         continue;
       }
 
       if (response.status === 401 || response.status === 403) {
-        sidCache.delete(sessionKey);
+        sessionCache.delete(sessionKey);
         throw new QbitClientError('AUTH_FAILED', 'qBittorrent 会话认证失败，请检查凭据配置');
       }
 
@@ -323,15 +408,15 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
 
     clearSession(instanceId: string): void {
       const prefix = `${instanceId}|`;
-      for (const key of sidCache.keys()) {
+      for (const key of sessionCache.keys()) {
         if (key.startsWith(prefix)) {
-          sidCache.delete(key);
+          sessionCache.delete(key);
         }
       }
     },
 
     clearSessions(): void {
-      sidCache.clear();
+      sessionCache.clear();
     },
   };
 }

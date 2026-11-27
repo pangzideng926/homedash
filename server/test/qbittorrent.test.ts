@@ -6,6 +6,8 @@ import { createDatabase, type DatabaseConnection } from '../src/db/index.js';
 import {
   assertQbitRequestAllowed,
   buildQbitSummaryData,
+  createQbitClient,
+  extractSessionCookieFromHeaders,
   extractTrackerDomain,
   QBIT_ALLOWED_GET_PATHS,
   QbitClientError,
@@ -321,6 +323,198 @@ describe('qBittorrent 登录、会话复用、403 重登与报错处理', () => 
     expect(bodyBanned.online).toBe(false);
     expect(bodyBanned.errorCode).toBe('IP_BANNED');
     expect(bodyBanned.error).toContain('封禁');
+  });
+
+  it('支持 qBittorrent 5.x QBT_SID_8085 cookie 登录、复用与 403 自动重登，并携带同名 cookie', async () => {
+    const config = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      QBIT_URL: 'http://192.0.2.10:8085',
+      QBIT_USERNAME: 'demo',
+      QBIT_PASSWORD: 'fake-qbit-password',
+      QBIT_CACHE_SECONDS: '0',
+    });
+
+    const calledUrls: Array<{ method: string; path: string; cookie: string | null }> = [];
+    let loginCount = 0;
+    let triggerExpired403Once = false;
+
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const parsed = new URL(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const headers = new Headers(init?.headers);
+      calledUrls.push({ method, path: parsed.pathname, cookie: headers.get('Cookie') });
+
+      if (parsed.pathname === '/api/v2/auth/login') {
+        loginCount += 1;
+        return new Response('Ok.', {
+          status: 200,
+          headers: {
+            'Set-Cookie': `QBT_SID_8085=qbt5-sid-${loginCount}; HttpOnly; path=/; SameSite=Strict`,
+          },
+        });
+      }
+
+      if (triggerExpired403Once && headers.get('Cookie') === 'QBT_SID_8085=qbt5-sid-1') {
+        return new Response('Forbidden', { status: 403 });
+      }
+
+      if (parsed.pathname === '/api/v2/app/version') {
+        return new Response('v5.1.0', { status: 200 });
+      }
+      if (parsed.pathname === '/api/v2/transfer/info') {
+        return new Response(JSON.stringify({ up_info_speed: 3000, dl_info_speed: 500 }), {
+          status: 200,
+        });
+      }
+      if (parsed.pathname === '/api/v2/sync/maindata') {
+        return new Response(
+          JSON.stringify({
+            server_state: { alltime_ul: 8000, alltime_dl: 2000, global_ratio: '4.0' },
+          }),
+          { status: 200 },
+        );
+      }
+      if (parsed.pathname === '/api/v2/torrents/info') {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (parsed.pathname === '/api/v2/torrents/categories') {
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    const app = createApp(config, database.db, { fetchFn: fetchMock });
+    const cookie = await loginAdmin(app);
+
+    const res1 = await app.request('/api/qbittorrent/summary', { headers: { Cookie: cookie } });
+    expect(res1.status).toBe(200);
+    const body1 = (await res1.json()) as QbitSummaryResponse;
+    expect(body1.online).toBe(true);
+    expect(body1.data?.version).toBe('v5.1.0');
+    expect(loginCount).toBe(1);
+
+    const res2 = await app.request('/api/qbittorrent/summary', { headers: { Cookie: cookie } });
+    expect(res2.status).toBe(200);
+    expect(loginCount).toBe(1);
+
+    // 模拟 qB 5.x 会话过期返回 403，自动重登一次并携带新值
+    triggerExpired403Once = true;
+    const res3 = await app.request('/api/qbittorrent/summary', { headers: { Cookie: cookie } });
+    expect(res3.status).toBe(200);
+    expect(loginCount).toBe(2);
+
+    const getCalls = calledUrls.filter((c) => c.method === 'GET');
+    expect(getCalls.slice(0, 10).every((c) => c.cookie === 'QBT_SID_8085=qbt5-sid-1')).toBe(true);
+    expect(getCalls.some((c) => c.cookie === 'QBT_SID_8085=qbt5-sid-2')).toBe(true);
+  });
+
+  it('正确解析多 Set-Cookie 头与逗号合并头，并在 cookie 名称不匹配时报错', async () => {
+    // 1. getSetCookie 返回多个 Set-Cookie 头
+    const multiHeaders = new Headers();
+    multiHeaders.append('Set-Cookie', 'theme=dark; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/');
+    multiHeaders.append('Set-Cookie', 'QBT_SID_8085=multi-token-1; HttpOnly; Path=/');
+    expect(extractSessionCookieFromHeaders(multiHeaders)).toEqual({
+      name: 'QBT_SID_8085',
+      value: 'multi-token-1',
+    });
+
+    // 2. 仅 headers.get('set-cookie')（无 getSetCookie）时的逗号合并头，含 Expires 逗号、空 SID 与多 cookie
+    const legacyFallbackHeaders = {
+      get: (name: string) =>
+        name.toLowerCase() === 'set-cookie'
+          ? 'theme=dark; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/, SID=; Expires=Thu, 01 Jan 1970 00:00:00 GMT, XSID=ignored; Path=/, QBT_SID_8085=merged-token==; HttpOnly; Path=/'
+          : null,
+    } as unknown as Headers;
+
+    const mergedQbitFetch = vi.fn<typeof fetch>(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/v2/auth/login') {
+        return {
+          ok: true,
+          status: 200,
+          headers: legacyFallbackHeaders,
+          text: async () => 'Ok.',
+        } as unknown as Response;
+      }
+      const reqHeaders = new Headers(init?.headers);
+      expect(reqHeaders.get('Cookie')).toBe('QBT_SID_8085=merged-token==');
+      return new Response('v5.0.4', { status: 200 });
+    });
+
+    const mergedClient = createQbitClient(mergedQbitFetch);
+    const version5 = await mergedClient.getVersion({
+      url: 'http://192.0.2.10:8085',
+      username: 'demo',
+      password: 'fake-qbit-password',
+      timeoutMs: 3000,
+    });
+    expect(version5).toBe('v5.0.4');
+
+    // 3. 合并头中包含旧版 SID 时同样工作
+    const mergedLegacyHeaders = new Headers({
+      'Set-Cookie': 'other=1; Path=/, SID=legacy-merged-1; HttpOnly; Path=/',
+    });
+    const legacyMergedFetch = vi.fn<typeof fetch>(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/v2/auth/login') {
+        return new Response('Ok.', { status: 200, headers: mergedLegacyHeaders });
+      }
+      const reqHeaders = new Headers(init?.headers);
+      expect(reqHeaders.get('Cookie')).toBe('SID=legacy-merged-1');
+      return new Response('v4.6.7', { status: 200 });
+    });
+
+    const legacyClient = createQbitClient(legacyMergedFetch);
+    const version4 = await legacyClient.getVersion({
+      url: 'http://192.0.2.10:8080',
+      username: 'demo',
+      password: 'fake-qbit-password',
+      timeoutMs: 3000,
+    });
+    expect(version4).toBe('v4.6.7');
+
+    // 4. 不匹配名称（如 XSID、QBT_SID_abc 等）返回 null 并触发 AUTH_FAILED 报错
+    const invalidCookieHeaders = [
+      'XSID=invalid-1; HttpOnly; Path=/',
+      'QBT_SID_abc=invalid-2; HttpOnly; Path=/',
+      'QBT_SID_=invalid-3; Path=/',
+      'MY_SID=invalid-4; Path=/',
+      'sid=lowercase-invalid; Path=/',
+      'SID=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/',
+      'other=1; Path=/; QBT_SID_8085=in-attr',
+    ];
+
+    for (const rawSetCookie of invalidCookieHeaders) {
+      expect(
+        extractSessionCookieFromHeaders(new Headers({ 'Set-Cookie': rawSetCookie })),
+      ).toBeNull();
+
+      const invalidFetch = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          new Response('Ok.', { status: 200, headers: { 'Set-Cookie': rawSetCookie } }),
+        );
+      const invalidClient = createQbitClient(invalidFetch);
+      await expect(
+        invalidClient.getVersion({
+          url: 'http://192.0.2.10:8085',
+          username: 'demo',
+          password: 'fake-qbit-password',
+          timeoutMs: 3000,
+        }),
+      ).rejects.toMatchObject({
+        name: 'QbitClientError',
+        code: 'AUTH_FAILED',
+        message: 'qBittorrent 登录未返回有效会话 Cookie',
+      });
+    }
   });
 
   it('QBIT_MOCK=true 返回模拟数据', async () => {
