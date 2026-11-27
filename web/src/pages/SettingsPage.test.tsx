@@ -47,14 +47,14 @@ describe('SettingsPage 设置状态页', () => {
               NAS_SSH_PORT: false,
             },
           },
-          qbittorrent: {
-            id: 'qbittorrent',
-            label: 'qBittorrent',
+          downloaders: {
+            id: 'downloaders',
+            label: '下载器',
             status: 'incomplete',
             statusLabel: '配置不完整',
             keys: {
-              QBIT_URL: true,
-              QBIT_PASSWORD: false,
+              DOWNLOADERS_MOCK: false,
+              DOWNLOADER_CACHE_SECONDS: true,
             },
           },
         },
@@ -71,7 +71,7 @@ describe('SettingsPage 设置状态页', () => {
     expect(screen.getByText('ADMIN_USERNAME')).toBeInTheDocument();
     expect(screen.getByText('SESSION_SECRET')).toBeInTheDocument();
     expect(screen.getByText('NAS_SSH_HOST')).toBeInTheDocument();
-    expect(screen.getByText('QBIT_PASSWORD')).toBeInTheDocument();
+    expect(screen.getByText('DOWNLOADER_CACHE_SECONDS')).toBeInTheDocument();
 
     expect(screen.getAllByText('已填')).toHaveLength(3);
     expect(screen.getAllByText('未填')).toHaveLength(3);
@@ -87,6 +87,9 @@ describe('SettingsPage 设置状态页', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith('/api/integrations')) {
         return jsonResponse({ modules: {} });
+      }
+      if (url.endsWith('/api/downloaders')) {
+        return jsonResponse({ error: 'skip' }, 404);
       }
       statusAttempt += 1;
       if (statusAttempt === 1) {
@@ -116,27 +119,45 @@ describe('SettingsPage 设置状态页', () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('集成配置区展示已设置状态、清除按钮、.env 只读与测试连接/保存交互', async () => {
+  it('集成配置区支持 NAS/MoviePilot 保存测试与多实例下载器增删改及测试连接', async () => {
     const user = userEvent.setup();
-    const putBodies: Array<{ url: string; body: unknown }> = [];
-    const testBodies: Array<{ url: string; body: unknown }> = [];
+    const putDownloaderBodies: Array<unknown> = [];
+    const testDownloaderBodies: Array<unknown> = [];
+
+    let currentDownloaders = [
+      {
+        id: 'qb-env',
+        name: 'qBittorrent',
+        type: 'qbittorrent',
+        url: 'http://192.0.2.10:8080',
+        username: 'demo',
+        passwordSet: true,
+        tags: [],
+        enabled: true,
+        source: 'env',
+        readonly: true,
+        readonlyReason: '由 .env 管理',
+      },
+      {
+        id: 'tr-1',
+        name: 'TR 保种',
+        type: 'transmission',
+        url: 'http://192.0.2.12:9091',
+        username: 'demo',
+        passwordSet: true,
+        tags: ['seed'],
+        enabled: true,
+        source: 'file',
+        readonly: false,
+      },
+    ];
 
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       const method = (init?.method ?? 'GET').toUpperCase();
 
       if (url.endsWith('/api/settings/status')) {
-        return jsonResponse({
-          modules: {
-            nas: {
-              id: 'nas',
-              label: 'NAS',
-              status: 'configured',
-              statusLabel: '已配置',
-              keys: { NAS_SSH_HOST: true },
-            },
-          },
-        });
+        return jsonResponse({ modules: {} });
       }
 
       if (url.endsWith('/api/integrations') && method === 'GET') {
@@ -157,9 +178,9 @@ describe('SettingsPage 设置状态页', () => {
               configured: true,
               mock: false,
               fields: {
-                url: { source: 'file', set: true, value: 'http://192.0.2.10:8080' },
-                username: { source: 'file', set: true, value: 'demo' },
-                password: { source: 'file', set: true },
+                url: { source: 'env', set: true, value: 'http://192.0.2.10:8080' },
+                username: { source: 'env', set: true, value: 'demo' },
+                password: { source: 'env', set: true },
               },
             },
             moviepilot: {
@@ -174,14 +195,48 @@ describe('SettingsPage 设置状态页', () => {
         });
       }
 
-      if (url.endsWith('/api/integrations/qbittorrent') && method === 'PUT') {
-        putBodies.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
-        return jsonResponse({ fileConfigured: true, modules: {} });
+      if (url.endsWith('/api/downloaders') && method === 'GET') {
+        return jsonResponse({
+          configured: true,
+          fileConfigured: true,
+          mock: false,
+          downloaders: currentDownloaders,
+        });
       }
 
-      if (url.endsWith('/api/integrations/moviepilot/test') && method === 'POST') {
-        testBodies.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
-        return jsonResponse({ ok: true, durationMs: 42, detail: 'MoviePilot API 连接成功' });
+      if (url.endsWith('/api/downloaders') && method === 'PUT') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as {
+          downloaders: typeof currentDownloaders;
+        };
+        putDownloaderBodies.push(body);
+        currentDownloaders = [
+          currentDownloaders[0]!,
+          ...body.downloaders.map((item, idx) => ({
+            ...item,
+            id: item.id ?? `new-${idx}`,
+            passwordSet: true,
+            source: 'file',
+            readonly: false,
+          })),
+        ];
+        return jsonResponse({
+          configured: true,
+          fileConfigured: true,
+          mock: false,
+          downloaders: currentDownloaders,
+        });
+      }
+
+      if (url.endsWith('/api/downloaders/test') && method === 'POST') {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        testDownloaderBodies.push(body);
+        return jsonResponse({
+          ok: true,
+          type: 'transmission',
+          version: '4.0.6',
+          durationMs: 28,
+          detail: 'Transmission 连接成功（版本：4.0.6）',
+        });
       }
 
       return jsonResponse({ error: '未预期请求' }, 404);
@@ -194,35 +249,50 @@ describe('SettingsPage 设置状态页', () => {
     const nasHostInput = screen.getByLabelText('主机地址') as HTMLInputElement;
     expect(nasHostInput).toBeDisabled();
     expect(nasHostInput.value).toBe('192.0.2.10');
-    expect(screen.getByText('由 .env 管理')).toBeInTheDocument();
+    expect(screen.getAllByText('由 .env 管理').length).toBeGreaterThanOrEqual(2);
 
-    // qBittorrent 密码只显示 placeholder "已设置（留空则不修改）"，不回显任何值
-    const qbitPassInput = screen.getByLabelText('密码') as HTMLInputElement;
-    expect(qbitPassInput.value).toBe('');
-    expect(qbitPassInput.placeholder).toBe('已设置（留空则不修改）');
+    // 列表中显示 qBittorrent (env只读无编辑/删除) 与 TR 保种
+    expect(screen.getByText('TR 保种')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑 qBittorrent' })).not.toBeInTheDocument();
 
-    // MoviePilot 令牌未设置
-    const mpTokenInput = screen.getByLabelText('API 令牌') as HTMLInputElement;
-    expect(mpTokenInput.placeholder).toBe('未设置');
+    // 测试 TR 保种连接
+    await user.click(screen.getByRole('button', { name: '测试连接 TR 保种' }));
+    expect(await screen.findByText(/Transmission 连接成功/)).toBeInTheDocument();
+    expect(testDownloaderBodies[0]).toMatchObject({ id: 'tr-1', type: 'transmission' });
 
-    // 点击清除 qBittorrent 密码并保存，应发送 password: null
-    await user.click(screen.getByRole('button', { name: '清除 qBittorrent 密码' }));
-    expect(qbitPassInput.placeholder).toBe('已标记清除，保存后生效');
-
-    const saveButtons = screen.getAllByRole('button', { name: '保存' });
-    await user.click(saveButtons[1]!);
-    expect(putBodies[0]?.body).toMatchObject({ password: null });
-
-    // 测试连接 MoviePilot
-    await user.type(screen.getByLabelText('服务地址'), 'https://mp.example.com');
-    await user.type(mpTokenInput, 'fake-temp-token');
-    const testButtons = screen.getAllByRole('button', { name: '测试连接' });
-    await user.click(testButtons[2]!);
-
-    expect(await screen.findByText(/MoviePilot API 连接成功/)).toBeInTheDocument();
-    expect(testBodies[0]?.body).toEqual({
-      url: 'https://mp.example.com',
-      apiToken: 'fake-temp-token',
+    // 编辑 TR 保种，清除密码并保存
+    await user.click(screen.getByRole('button', { name: '编辑 TR 保种' }));
+    const dlPassInput = screen.getByLabelText('密码') as HTMLInputElement;
+    expect(dlPassInput.placeholder).toBe('已设置（留空则不修改）');
+    await user.click(screen.getByRole('button', { name: '清除下载器密码' }));
+    expect(dlPassInput.placeholder).toBe('已标记清除，保存后生效');
+    await user.click(screen.getByRole('button', { name: '保存实例' }));
+    expect(putDownloaderBodies[0]).toMatchObject({
+      downloaders: [{ id: 'tr-1', password: null }],
     });
+
+    // 新增下载器实例并多选标签
+    await user.click(screen.getByRole('button', { name: '新增下载器' }));
+    await user.type(screen.getByLabelText('实例名称'), 'qB 刷流');
+    await user.type(screen.getByLabelText('WebUI / RPC 地址'), 'http://192.0.2.11:8080');
+    await user.type(screen.getByLabelText('用户名'), 'demo');
+    await user.type(screen.getByLabelText('密码'), 'fake-pass-1');
+    await user.click(screen.getByLabelText('刷流'));
+    await user.click(screen.getByRole('button', { name: '保存实例' }));
+    expect(putDownloaderBodies[1]).toMatchObject({
+      downloaders: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'qB 刷流',
+          type: 'qbittorrent',
+          tags: ['brush'],
+          password: 'fake-pass-1',
+        }),
+      ]),
+    });
+
+    // 删除实例
+    await user.click(screen.getByRole('button', { name: '删除 TR 保种' }));
+    await user.click(screen.getByRole('button', { name: '确认删除' }));
+    expect(putDownloaderBodies).toHaveLength(3);
   });
 });

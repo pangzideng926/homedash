@@ -14,6 +14,7 @@ import {
   type ConfigKey,
   type ConfigModuleName,
   type DevicesSectionConfig,
+  type DownloadersSectionConfig,
   type MoviepilotSectionConfig,
   type NasSectionConfig,
   type QbittorrentSectionConfig,
@@ -234,6 +235,20 @@ const nasFieldSchemas = {
   NAS_SSH_KEY_PATH: nonEmptyStringSchema('NAS SSH 私钥路径'),
   NAS_MOCK: booleanStringSchema,
   NAS_CACHE_SECONDS: nonNegativeIntSchema('NAS 状态缓存时间（秒）'),
+  DOCKER_ACTIONS_ENABLED: booleanStringSchema,
+  DOCKER_PROTECTED_CONTAINERS: z.string().transform((val) =>
+    val
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ),
+  DOCKER_AUDIT_FILE: nonEmptyStringSchema('Docker 操作审计日志路径'),
+} as const;
+
+const downloadersFieldSchemas = {
+  DOWNLOADERS_MOCK: booleanStringSchema,
+  DOWNLOADER_CACHE_SECONDS: nonNegativeIntSchema('下载器状态缓存时间（秒）'),
+  DOWNLOADER_TIMEOUT_MS: positiveIntSchema('下载器请求超时时间（毫秒）'),
 } as const;
 
 const qbittorrentFieldSchemas = {
@@ -608,8 +623,42 @@ function parseNasSection(
     30,
     issues,
   );
+  const dockerActionsRes = parseSingleKey(
+    'nas',
+    'DOCKER_ACTIONS_ENABLED',
+    nasFieldSchemas.DOCKER_ACTIONS_ENABLED,
+    env.DOCKER_ACTIONS_ENABLED,
+    false,
+    issues,
+  );
+  const dockerProtectedRes = parseSingleKey(
+    'nas',
+    'DOCKER_PROTECTED_CONTAINERS',
+    nasFieldSchemas.DOCKER_PROTECTED_CONTAINERS,
+    env.DOCKER_PROTECTED_CONTAINERS,
+    ['homedash'],
+    issues,
+  );
+  const dockerAuditRes = parseSingleKey(
+    'nas',
+    'DOCKER_AUDIT_FILE',
+    nasFieldSchemas.DOCKER_AUDIT_FILE,
+    env.DOCKER_AUDIT_FILE,
+    './data/docker-audit.log',
+    issues,
+  );
 
-  if (!hostRes.ok || !portRes.ok || !userRes.ok || !keyPathRes.ok || !mockRes.ok || !cacheRes.ok) {
+  if (
+    !hostRes.ok ||
+    !portRes.ok ||
+    !userRes.ok ||
+    !keyPathRes.ok ||
+    !mockRes.ok ||
+    !cacheRes.ok ||
+    !dockerActionsRes.ok ||
+    !dockerProtectedRes.ok ||
+    !dockerAuditRes.ok
+  ) {
     return undefined;
   }
 
@@ -620,6 +669,65 @@ function parseNasSection(
     ...(keyPathRes.value !== undefined ? { NAS_SSH_KEY_PATH: keyPathRes.value } : {}),
     NAS_MOCK: mockRes.value,
     NAS_CACHE_SECONDS: cacheRes.value,
+    DOCKER_ACTIONS_ENABLED: dockerActionsRes.value,
+    DOCKER_PROTECTED_CONTAINERS: dockerProtectedRes.value,
+    DOCKER_AUDIT_FILE: dockerAuditRes.value,
+  };
+}
+
+function parseDownloadersSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): DownloadersSectionConfig | undefined {
+  const anyFilled = CONFIG_MODULE_KEYS.downloaders.some((key) => isEnvValueFilled(env[key]));
+  if (!anyFilled) {
+    return undefined;
+  }
+
+  const fallbackCacheSeconds =
+    isEnvValueFilled(env.QBIT_CACHE_SECONDS) &&
+    downloadersFieldSchemas.DOWNLOADER_CACHE_SECONDS.safeParse(env.QBIT_CACHE_SECONDS).success
+      ? downloadersFieldSchemas.DOWNLOADER_CACHE_SECONDS.parse(env.QBIT_CACHE_SECONDS)
+      : 10;
+  const fallbackTimeoutMs =
+    isEnvValueFilled(env.QBIT_TIMEOUT_MS) &&
+    downloadersFieldSchemas.DOWNLOADER_TIMEOUT_MS.safeParse(env.QBIT_TIMEOUT_MS).success
+      ? downloadersFieldSchemas.DOWNLOADER_TIMEOUT_MS.parse(env.QBIT_TIMEOUT_MS)
+      : 8000;
+
+  const mockRes = parseSingleKey(
+    'downloaders',
+    'DOWNLOADERS_MOCK',
+    downloadersFieldSchemas.DOWNLOADERS_MOCK,
+    env.DOWNLOADERS_MOCK,
+    false,
+    issues,
+  );
+  const cacheRes = parseSingleKey(
+    'downloaders',
+    'DOWNLOADER_CACHE_SECONDS',
+    downloadersFieldSchemas.DOWNLOADER_CACHE_SECONDS,
+    env.DOWNLOADER_CACHE_SECONDS,
+    fallbackCacheSeconds,
+    issues,
+  );
+  const timeoutRes = parseSingleKey(
+    'downloaders',
+    'DOWNLOADER_TIMEOUT_MS',
+    downloadersFieldSchemas.DOWNLOADER_TIMEOUT_MS,
+    env.DOWNLOADER_TIMEOUT_MS,
+    fallbackTimeoutMs,
+    issues,
+  );
+
+  if (!mockRes.ok || !cacheRes.ok || !timeoutRes.ok) {
+    return undefined;
+  }
+
+  return {
+    DOWNLOADERS_MOCK: mockRes.value,
+    DOWNLOADER_CACHE_SECONDS: cacheRes.value,
+    DOWNLOADER_TIMEOUT_MS: timeoutRes.value,
   };
 }
 
@@ -790,6 +898,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
   }
 
   const nas = parseNasSection(env, issues);
+  const downloaders = parseDownloadersSection(env, issues);
   const qbittorrent = parseQbittorrentSection(env, issues);
   const moviepilot = parseMoviepilotSection(env, issues);
   const devices = parseDevicesSection(env, issues);
@@ -834,6 +943,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     app: appSection,
     auth: authSection,
     nas,
+    downloaders,
     qbittorrent,
     moviepilot,
     devices,

@@ -15,6 +15,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'));
 const NasPage = lazy(() => import('@/pages/NasPage'));
 const SeedingPage = lazy(() => import('@/pages/SeedingPage'));
+const DownloaderDetailPage = lazy(() => import('@/pages/DownloaderDetailPage'));
 const MediaPage = lazy(() => import('@/pages/MediaPage'));
 const DevicesPage = lazy(() => import('@/pages/DevicesPage'));
 const PcPage = lazy(() => import('@/pages/PcPage'));
@@ -55,9 +56,19 @@ export const NAV_ROUTES: NavRouteItem[] = [
         id: 'seeding',
         path: '/seeding',
         title: '下载与做种',
-        description: 'qBittorrent 实时传输、状态统计与做种监控',
+        description: '多实例下载器（qBittorrent / Transmission）只读传输与做种监控',
         icon: ArrowUpDown,
         component: SeedingPage,
+        children: [
+          {
+            id: 'seeding-detail',
+            path: '/seeding/:id',
+            title: '下载器详情',
+            description: '下载器实例状态分组、Tracker/分类/标签统计与异常种子排查',
+            hiddenInMenu: true,
+            component: DownloaderDetailPage,
+          },
+        ],
       },
       {
         id: 'media',

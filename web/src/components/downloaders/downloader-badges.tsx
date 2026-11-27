@@ -1,0 +1,45 @@
+import {
+  DOWNLOADER_TAG_MAP,
+  getDownloaderTypeLabel,
+} from '@/components/downloaders/downloader-utils';
+import type { DownloaderTag, DownloaderType } from '@/lib/api';
+import { cn } from '@/lib/utils';
+
+export function DownloaderTypeBadge({
+  type,
+  className,
+}: {
+  type: DownloaderType;
+  className?: string;
+}) {
+  const isQb = type === 'qbittorrent';
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold whitespace-nowrap',
+        isQb
+          ? 'border-blue-500/25 bg-blue-500/15 text-blue-700 dark:text-blue-400'
+          : 'border-orange-500/25 bg-orange-500/15 text-orange-700 dark:text-orange-400',
+        className,
+      )}
+    >
+      {getDownloaderTypeLabel(type)}
+    </span>
+  );
+}
+
+export function DownloaderTagBadge({ tag, className }: { tag: DownloaderTag; className?: string }) {
+  const meta = DOWNLOADER_TAG_MAP[tag];
+  if (!meta) return null;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+        meta.className,
+        className,
+      )}
+    >
+      {meta.label}
+    </span>
+  );
+}

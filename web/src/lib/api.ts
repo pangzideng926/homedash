@@ -701,12 +701,53 @@ export interface NasDockerContainer {
   status: string;
   runningFor: string;
   ports: string;
+  cpuPercent?: string;
+  memUsage?: string;
+  memPercent?: string;
+  protected?: boolean;
 }
 
 export interface NasDockerInfo {
   available: boolean;
   reason?: string;
+  actionsEnabled?: boolean;
+  protectedContainers?: string[];
   containers: NasDockerContainer[];
+}
+
+export type DockerAction = 'start' | 'stop' | 'restart';
+
+export interface DockerActionResponse {
+  ok: boolean;
+  container: string;
+  action: DockerAction;
+  message: string;
+  durationMs: number;
+}
+
+export interface DockerLogsResponse {
+  container: string;
+  tail: number;
+  logs: string;
+  fetchedAt: string;
+}
+
+export type DockerAuditResult = 'success' | 'rejected' | 'failed';
+
+export interface DockerAuditEntry {
+  timestamp: string;
+  username: string;
+  clientIp: string;
+  container: string;
+  action: string;
+  result: DockerAuditResult;
+  durationMs: number;
+  error?: string;
+}
+
+export interface DockerAuditResponse {
+  entries: DockerAuditEntry[];
+  total: number;
 }
 
 export interface NasStatusData {
@@ -754,6 +795,231 @@ export async function fetchNasStatus(options?: {
     method: 'GET',
     ...(options?.signal ? { signal: options.signal } : {}),
     fallbackErrorMessage: '获取 NAS 状态失败，请稍后重试',
+  });
+}
+
+export async function executeNasDockerAction(
+  name: string,
+  action: DockerAction,
+): Promise<DockerActionResponse> {
+  return apiRequest<DockerActionResponse>(`/api/nas/docker/${encodeURIComponent(name)}/${action}`, {
+    method: 'POST',
+    fallbackErrorMessage: '执行容器操作失败，请稍后重试',
+  });
+}
+
+export async function fetchNasDockerLogs(
+  name: string,
+  options?: { tail?: number; signal?: AbortSignal },
+): Promise<DockerLogsResponse> {
+  const tail = options?.tail ?? 200;
+  return apiRequest<DockerLogsResponse>(
+    `/api/nas/docker/${encodeURIComponent(name)}/logs?tail=${tail}`,
+    {
+      method: 'GET',
+      ...(options?.signal ? { signal: options.signal } : {}),
+      fallbackErrorMessage: '获取容器日志失败，请稍后重试',
+    },
+  );
+}
+
+export async function fetchNasDockerAudit(options?: {
+  limit?: number;
+  signal?: AbortSignal;
+}): Promise<DockerAuditResponse> {
+  const limit = options?.limit ?? 20;
+  return apiRequest<DockerAuditResponse>(`/api/nas/docker/audit?limit=${limit}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取 Docker 操作审计记录失败，请稍后重试',
+  });
+}
+
+// ==================== 多实例下载器（qBittorrent + Transmission） ====================
+
+export type DownloaderType = 'qbittorrent' | 'transmission';
+export type DownloaderTag = 'download' | 'brush' | 'seed';
+
+export interface DownloaderPublicConfig {
+  id: string;
+  name: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  passwordSet: boolean;
+  tags: DownloaderTag[];
+  enabled: boolean;
+  source: 'file' | 'env' | 'mock';
+  readonly: boolean;
+  readonlyReason?: string;
+}
+
+export interface DownloaderInput {
+  id?: string;
+  name: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  password?: string | null;
+  tags: DownloaderTag[];
+  enabled: boolean;
+}
+
+export interface DownloadersListResponse {
+  configured: boolean;
+  fileConfigured: boolean;
+  mock: boolean;
+  downloaders: DownloaderPublicConfig[];
+  error?: string;
+}
+
+export interface DownloaderStateCounts {
+  seeding: number;
+  downloading: number;
+  paused: number;
+  error: number;
+  stalled: number;
+  total: number;
+}
+
+export interface DownloaderTrackerStat {
+  domain: string;
+  count: number;
+  seedingCount: number;
+  size: number;
+}
+
+export interface DownloaderGroupStat {
+  name: string;
+  count: number;
+  seedingCount: number;
+  size: number;
+}
+
+export interface DownloaderProblemTorrent {
+  id: string;
+  name: string;
+  state: string;
+  reason: string;
+  size: number;
+  trackerDomain: string;
+  group: string;
+  progress: number;
+}
+
+export interface DownloaderInstanceSummary {
+  id: string;
+  name: string;
+  type: DownloaderType;
+  tags: DownloaderTag[];
+  online: boolean;
+  checkedAt: string;
+  cached: boolean;
+  errorCode?: string;
+  error?: string;
+  version: string;
+  upSpeed: number;
+  dlSpeed: number;
+  totalUploaded?: number;
+  totalDownloaded?: number;
+  ratio?: number;
+  totalsApproximate?: boolean;
+  counts: DownloaderStateCounts;
+  totalSize: number;
+  byTracker: DownloaderTrackerStat[];
+  byCategory?: DownloaderGroupStat[];
+  byLabel?: DownloaderGroupStat[];
+  problems: DownloaderProblemTorrent[];
+  problemsTotal: number;
+}
+
+export interface DownloadersSummaryTotals {
+  totalInstances: number;
+  onlineInstances: number;
+  offlineInstances: number;
+  upSpeed: number;
+  dlSpeed: number;
+  totalSize: number;
+  counts: DownloaderStateCounts;
+}
+
+export interface DownloadersSummaryResponse {
+  configured: boolean;
+  mock: boolean;
+  checkedAt: string;
+  instances: DownloaderInstanceSummary[];
+  totals: DownloadersSummaryTotals;
+}
+
+export interface DownloaderTestInput {
+  id?: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  password?: string;
+}
+
+export interface DownloaderTestResponse {
+  ok: boolean;
+  type: DownloaderType;
+  version?: string;
+  durationMs: number;
+  detail?: string;
+  error?: string;
+}
+
+export async function fetchDownloaders(signal?: AbortSignal): Promise<DownloadersListResponse> {
+  return apiRequest<DownloadersListResponse>('/api/downloaders', {
+    method: 'GET',
+    ...(signal ? { signal } : {}),
+    fallbackErrorMessage: '获取下载器配置列表失败，请稍后重试',
+  });
+}
+
+export async function saveDownloaders(
+  downloaders: DownloaderInput[],
+): Promise<DownloadersListResponse> {
+  return apiRequest<DownloadersListResponse>('/api/downloaders', {
+    method: 'PUT',
+    body: { downloaders },
+    fallbackErrorMessage: '保存下载器配置失败，请稍后重试',
+  });
+}
+
+export async function fetchDownloadersSummary(options?: {
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<DownloadersSummaryResponse> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<DownloadersSummaryResponse>(`/api/downloaders/summary${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取下载器汇总状态失败，请稍后重试',
+  });
+}
+
+export async function fetchDownloaderDetail(
+  id: string,
+  options?: { refresh?: boolean; signal?: AbortSignal },
+): Promise<DownloaderInstanceSummary> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<DownloaderInstanceSummary>(
+    `/api/downloaders/${encodeURIComponent(id)}/summary${query}`,
+    {
+      method: 'GET',
+      ...(options?.signal ? { signal: options.signal } : {}),
+      fallbackErrorMessage: '获取下载器详情失败，请稍后重试',
+    },
+  );
+}
+
+export async function testDownloaderConnection(
+  payload: DownloaderTestInput,
+): Promise<DownloaderTestResponse> {
+  return apiRequest<DownloaderTestResponse>('/api/downloaders/test', {
+    method: 'POST',
+    body: payload,
+    fallbackErrorMessage: '下载器连接测试失败，请稍后重试',
   });
 }
 

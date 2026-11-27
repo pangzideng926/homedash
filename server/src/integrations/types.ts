@@ -2,11 +2,26 @@ export type IntegrationModuleName = 'nas' | 'qbittorrent' | 'moviepilot';
 
 export type IntegrationFieldSource = 'env' | 'file' | 'unset';
 
+export type DownloaderType = 'qbittorrent' | 'transmission';
+
+export type DownloaderTag = 'download' | 'brush' | 'seed';
+
 export interface EncryptedFieldValue {
   v: 1;
   iv: string;
   tag: string;
   data: string;
+}
+
+export interface StoredDownloaderRecord {
+  id: string;
+  name: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  password?: EncryptedFieldValue;
+  tags: DownloaderTag[];
+  enabled: boolean;
 }
 
 export interface IntegrationsFileData {
@@ -24,6 +39,10 @@ export interface IntegrationsFileData {
   moviepilot?: {
     url?: string;
     apiToken?: EncryptedFieldValue;
+  };
+  downloaders?: StoredDownloaderRecord[];
+  docker?: {
+    protectedContainers?: string[];
   };
 }
 
@@ -134,4 +153,51 @@ export interface IntegrationTestResponse {
 
 export type SaveIntegrationResult =
   | { ok: true; data: IntegrationsViewResponse }
+  | { ok: false; status: 400 | 409 | 500; error: string; details?: string[] };
+
+export interface DownloaderPublicConfig {
+  id: string;
+  name: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  passwordSet: boolean;
+  tags: DownloaderTag[];
+  enabled: boolean;
+  source: 'file' | 'env' | 'mock';
+  readonly: boolean;
+  readonlyReason?: string;
+}
+
+export interface DownloadersListResponse {
+  configured: boolean;
+  fileConfigured: boolean;
+  mock: boolean;
+  downloaders: DownloaderPublicConfig[];
+  error?: string;
+}
+
+export interface ResolvedDownloaderInstance {
+  id: string;
+  name: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  password?: string;
+  tags: DownloaderTag[];
+  enabled: boolean;
+  source: 'file' | 'env' | 'mock';
+  readonly: boolean;
+}
+
+export interface ResolvedDownloadersConfig {
+  configured: boolean;
+  mock: boolean;
+  cacheSeconds: number;
+  timeoutMs: number;
+  instances: ResolvedDownloaderInstance[];
+}
+
+export type SaveDownloadersResult =
+  | { ok: true; data: DownloadersListResponse }
   | { ok: false; status: 400 | 409 | 500; error: string; details?: string[] };

@@ -31,6 +31,8 @@ export const NAS_READONLY_STATUS_SCRIPT = [
   'df -kPT 2>/dev/null || df -kP 2>/dev/null || true',
   'echo "===DOCKER==="',
   'if command -v docker >/dev/null 2>&1; then if command -v timeout >/dev/null 2>&1; then timeout 4 docker ps -a --format "{{json .}}" 2>&1; else docker ps -a --format "{{json .}}" 2>&1; fi; echo "DOCKER_EXIT=$?"; else echo "DOCKER_NOT_INSTALLED"; fi',
+  'echo "===DOCKER_STATS==="',
+  'if command -v docker >/dev/null 2>&1; then if command -v timeout >/dev/null 2>&1; then timeout 4 docker stats --no-stream --format "{{json .}}" 2>/dev/null || true; else docker stats --no-stream --format "{{json .}}" 2>/dev/null || true; fi; fi',
   'echo "===END==="',
 ].join('\n');
 

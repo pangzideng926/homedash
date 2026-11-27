@@ -516,10 +516,54 @@ export function parseNasDfOutput(lines: readonly string[]): NasVolumeInfo[] {
   return volumes;
 }
 
+export interface NasDockerStatItem {
+  cpuPercent: string;
+  memUsage: string;
+  memPercent: string;
+}
+
 /**
- * 解析 docker ps -a --format "{{json .}}" 输出，兼容权限不足与未安装场景。
+ * 解析 docker stats --no-stream --format "{{json .}}" 输出，按容器名称映射资源占用。
  */
-export function parseNasDockerOutput(lines: readonly string[]): NasDockerInfo {
+export function parseNasDockerStatsOutput(
+  lines: readonly string[],
+): Map<string, NasDockerStatItem> {
+  const map = new Map<string, NasDockerStatItem>();
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || !line.startsWith('{')) continue;
+    try {
+      const item = JSON.parse(line) as Record<string, unknown>;
+      const rawName =
+        typeof item.Name === 'string'
+          ? item.Name
+          : typeof item.Container === 'string'
+            ? item.Container
+            : '';
+      const name = rawName.trim().replace(/^\//, '');
+      if (!name) continue;
+
+      const cpuPercent = typeof item.CPUPerc === 'string' ? item.CPUPerc.trim() : '';
+      const memUsage = typeof item.MemUsage === 'string' ? item.MemUsage.trim() : '';
+      const memPercent = typeof item.MemPerc === 'string' ? item.MemPerc.trim() : '';
+
+      if (cpuPercent || memUsage || memPercent) {
+        map.set(name, { cpuPercent, memUsage, memPercent });
+      }
+    } catch {
+      // 忽略单行非 JSON 输出或 stats 超时错误输出
+    }
+  }
+  return map;
+}
+
+/**
+ * 解析 docker ps -a --format "{{json .}}" 输出，兼容权限不足与未安装场景，并按容器名合并 docker stats。
+ */
+export function parseNasDockerOutput(
+  lines: readonly string[],
+  statsLines?: readonly string[],
+): NasDockerInfo {
   const trimmedLines = lines.map((l) => l.trim()).filter(Boolean);
   if (trimmedLines.length === 0 || trimmedLines.includes('DOCKER_NOT_INSTALLED')) {
     return {
@@ -561,19 +605,34 @@ export function parseNasDockerOutput(lines: readonly string[]): NasDockerInfo {
     };
   }
 
+  const statsMap = statsLines
+    ? parseNasDockerStatsOutput(statsLines)
+    : new Map<string, NasDockerStatItem>();
   const containers: NasDockerContainer[] = [];
   for (const line of contentLines) {
     if (!line.startsWith('{')) continue;
     try {
       const item = JSON.parse(line) as Record<string, unknown>;
-      const name = typeof item.Names === 'string' ? item.Names : '';
+      const name = typeof item.Names === 'string' ? item.Names.trim() : '';
       const image = typeof item.Image === 'string' ? item.Image : '';
       const state = typeof item.State === 'string' ? item.State : '';
       const status = typeof item.Status === 'string' ? item.Status : '';
       const runningFor = typeof item.RunningFor === 'string' ? item.RunningFor : '';
       const ports = typeof item.Ports === 'string' ? item.Ports : '';
       const id = typeof item.ID === 'string' ? item.ID : name || String(containers.length + 1);
-      containers.push({ id, name, image, state, status, runningFor, ports });
+      const stat = statsMap.get(name.replace(/^\//, ''));
+      containers.push({
+        id,
+        name,
+        image,
+        state,
+        status,
+        runningFor,
+        ports,
+        ...(stat?.cpuPercent ? { cpuPercent: stat.cpuPercent } : {}),
+        ...(stat?.memUsage ? { memUsage: stat.memUsage } : {}),
+        ...(stat?.memPercent ? { memPercent: stat.memPercent } : {}),
+      });
     } catch {
       // 忽略单行非 JSON 输出
     }
@@ -674,6 +733,6 @@ export function parseNasStatusOutput(stdout: string, nowMs: number = Date.now())
     smart,
     raids: parseMdstatOutput(sections.MDSTAT ?? []),
     volumes: parseNasDfOutput(sections.DF ?? []),
-    docker: parseNasDockerOutput(sections.DOCKER ?? []),
+    docker: parseNasDockerOutput(sections.DOCKER ?? [], sections.DOCKER_STATS),
   };
 }

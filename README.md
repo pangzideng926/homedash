@@ -4,8 +4,8 @@
 
 ## 规划与已实现功能
 
-- NAS 状态监控（Linux SSH 只读：CPU/内存、传感器温度、`/proc/mdstat` RAID、`/volume*` 卷与 Docker 容器列表）
-- qBittorrent 下载与做种只读监控（WebUI API v2 白名单：速度、分享率、状态分组、Tracker/分类统计与异常种子排查）
+- NAS 状态监控与受限容器运维（Linux SSH 只读：CPU/内存、传感器温度、`/proc/mdstat` RAID、`/volume*` 卷、Docker `ps` + `stats` 与受限启停/日志查看/审计）
+- 多实例下载器监控（qBittorrent WebUI API v2 + Transmission RPC 只读白名单：多实例汇总、用途标签、速度/分享率、状态分组、Tracker/分类或标签统计与异常种子排查）
 - MoviePilot 影视订阅与入库监控（以官方仓库 `jxxghp/MoviePilot` 当前默认分支 v3 为准，只读接口白名单）
 - 加密集成凭据管理（在 `/settings` 页面配置，AES-256-GCM 加密与 `.env` 优先级覆盖）
 - 家用设备状态（多设备 SSH 只读采集，支持 Windows / macOS / Linux，界面增删改与连通性测试）
@@ -161,25 +161,36 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 
 `nas`、`qbittorrent`、`moviepilot` 三个模块支持在 `.env` 中配置或通过 `/settings` 页面的“集成配置”区加密保存（`.env` 优先级高于文件，`.env` 可全部留空或仅配置部分字段如缓存/模拟开关）。
 
-| 模块          | 环境变量                                                                                                                  | 说明                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`、`NAS_MOCK`、`NAS_CACHE_SECONDS`                       | NAS 只读 SSH 采集参数与缓存时间（默认 `30` 秒）；`NAS_MOCK=true` 返回模拟 Debian 12 NAS 状态                         |
-| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`、`QBIT_MOCK`、`QBIT_CACHE_SECONDS`、`QBIT_TIMEOUT_MS`                        | qBittorrent WebUI 地址与凭据、缓存时间（默认 `10` 秒）及超时（默认 `8000` 毫秒）                                     |
-| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`、`MOVIEPILOT_MOCK`、`MOVIEPILOT_CACHE_SECONDS`、`MOVIEPILOT_TIMEOUT_MS`          | MoviePilot v3 地址与 API 令牌、缓存时间（默认 `60` 秒）及超时（默认 `8000` 毫秒）                                    |
-| `devices`     | `DEVICES_FILE`、`DEVICES_READONLY`、`DEVICES_MOCK`、`DEVICE_SSH_TIMEOUT_MS`、`DEVICE_CACHE_SECONDS`                       | 多设备家用主机（Windows / macOS / Linux）清单与只读 SSH 采集参数；`DEVICES_MOCK=true` 返回模拟 Windows 与 macOS 设备 |
-| `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH`、`WIN_SSH_TIMEOUT_MS`、`WIN_CACHE_SECONDS`、`WIN_MOCK` | 旧版兼容：未配置 `DEVICES_FILE` 时自动迁移为只读“Windows 设备”；`WIN_MOCK=true` 兼容等效于 `DEVICES_MOCK=true`       |
-| `vps`         | `VPS_LIST_FILE`、`VPS_READONLY`                                                                                           | 本地 VPS 信息 JSON 文件路径与只读模式开关（`VPS_READONLY=true` 时禁止页面编辑与 `PUT /api/vps` 写入）                |
+| 模块          | 环境变量                                                                                                                                                                          | 说明                                                                                                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`、`NAS_MOCK`、`NAS_CACHE_SECONDS`、`DOCKER_ACTIONS_ENABLED`、`DOCKER_PROTECTED_CONTAINERS`、`DOCKER_AUDIT_FILE` | NAS 只读 SSH 采集参数、缓存时间（默认 `30` 秒）与受限 Docker 操作开关（默认 `false`）、受保护容器（默认 `homedash`）及审计日志路径（默认 `./data/docker-audit.log`） |
+| `downloaders` | `DOWNLOADERS_MOCK`、`DOWNLOADER_CACHE_SECONDS`、`DOWNLOADER_TIMEOUT_MS`                                                                                                           | 多实例下载器（qBittorrent / Transmission）缓存时间（默认 `10` 秒）与超时（默认 `8000` 毫秒）；`DOWNLOADERS_MOCK=true` 返回 3 个模拟实例                              |
+| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`、`QBIT_MOCK`、`QBIT_CACHE_SECONDS`、`QBIT_TIMEOUT_MS`                                                                                | 旧版单实例 qBittorrent 配置；未配置 `downloaders` 数组时自动迁移为 `qbittorrent-default`（`.env` 来源为只读）                                                        |
+| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`、`MOVIEPILOT_MOCK`、`MOVIEPILOT_CACHE_SECONDS`、`MOVIEPILOT_TIMEOUT_MS`                                                                  | MoviePilot v3 地址与 API 令牌、缓存时间（默认 `60` 秒）及超时（默认 `8000` 毫秒）                                                                                    |
+| `devices`     | `DEVICES_FILE`、`DEVICES_READONLY`、`DEVICES_MOCK`、`DEVICE_SSH_TIMEOUT_MS`、`DEVICE_CACHE_SECONDS`                                                                               | 多设备家用主机（Windows / macOS / Linux）清单与只读 SSH 采集参数；`DEVICES_MOCK=true` 返回模拟 Windows 与 macOS 设备                                                 |
+| `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH`、`WIN_SSH_TIMEOUT_MS`、`WIN_CACHE_SECONDS`、`WIN_MOCK`                                                         | 旧版兼容：未配置 `DEVICES_FILE` 时自动迁移为只读“Windows 设备”；`WIN_MOCK=true` 兼容等效于 `DEVICES_MOCK=true`                                                       |
+| `vps`         | `VPS_LIST_FILE`、`VPS_READONLY`                                                                                                                                                   | 本地 VPS 信息 JSON 文件路径与只读模式开关（`VPS_READONLY=true` 时禁止页面编辑与 `PUT /api/vps` 写入）                                                                |
 
-#### 4. 集成凭据存储、NAS / qBittorrent / MoviePilot 只读采集说明
+#### 4. 集成凭据存储、NAS Docker 与多实例下载器说明
 
 - **加密集成凭据存储（`INTEGRATIONS_FILE`）**：
-  - 敏感字段（`qbittorrent.password`、`moviepilot.apiToken`）使用 AES-256-GCM 加密（每个字段独立随机 12 字节 IV，存储 `{v:1, iv, tag, data}` Base64 结构），加密密钥来自 `CONFIG_ENCRYPTION_KEY`，未设置时使用 `SESSION_SECRET` 通过 HKDF-SHA256（固定 info `"homedash-integrations-v1"`）派生。非敏感字段明文存储，写入前生成 `.bak` 备份并执行原子替换。
-  - `.env` 中已设置的字段优先级最高，界面显示为只读并标注“由 .env 管理”，通过 `PUT /api/integrations/:module` 修改对应字段会返回 `409`。`GET /api/integrations` 永远只返回敏感字段是否已设置（`set`）与来源（`source`），绝不返回明文或密文。
-- **NAS 只读 SSH 采集**：
-  - 复用 `ssh2` 只读执行器与缓存框架，执行固定只读脚本采集主机信息、`/etc/os-release`、`/proc/uptime`、`/proc/loadavg`、`/proc/stat`（两次采样）、`/proc/meminfo`、`/sys/class/thermal` 与 `/sys/class/hwmon` 分组温度、`/proc/mdstat` RAID 状态、`df -kPT`（排除虚拟/系统分区并重点展示 `/volume*`）以及 `docker ps -a`。
-  - 绝不执行 `sudo`、重启、写文件或 `docker start/stop/rm` 等操作；`smartctl` 无权限或 `docker` 权限不足时自动安全跳过并在结果中标注中文原因。
-- **qBittorrent（WebUI API v2 只读）**：
-  - 登录 `POST /api/v2/auth/login` 复用 `SID` Cookie（遇 `403` 自动重登一次，识别 `"Fails."` 与 IP 封禁提示），仅调用只读白名单接口（`/api/v2/app/version`、`/api/v2/transfer/info`、`/api/v2/sync/maindata`、`/api/v2/torrents/info`、`/api/v2/torrents/categories`），不逐个请求 `/api/v2/torrents/trackers` 且严禁任何控制/删除接口。
+  - 敏感字段（`downloaders[].password`、`qbittorrent.password`、`moviepilot.apiToken`）使用 AES-256-GCM 加密（每个字段独立随机 12 字节 IV，存储 `{v:1, iv, tag, data}` Base64 结构），加密密钥来自 `CONFIG_ENCRYPTION_KEY`，未设置时使用 `SESSION_SECRET` 通过 HKDF-SHA256（固定 info `"homedash-integrations-v1"`）派生。非敏感字段明文存储，写入前生成 `.bak` 备份并执行原子替换。
+  - `.env` 中已设置的字段优先级最高，界面显示为只读并标注“由 .env 管理”，通过 `PUT /api/integrations/:module` 或 `PUT /api/downloaders` 修改对应项会返回 `409`。`GET /api/integrations` 与 `GET /api/downloaders` 永远只返回敏感字段是否已设置（`set` / `passwordSet`），绝不返回明文或密文。
+- **NAS 只读 SSH 采集与 Docker 容器受限操作**：
+  - 状态采集复用 `ssh2` 执行固定只读脚本，采集主机信息、`/etc/os-release`、`/proc/uptime`、`/proc/loadavg`、`/proc/stat`（两次采样）、`/proc/meminfo`、`/sys/class/thermal` 与 `/sys/class/hwmon` 分组温度、`/proc/mdstat` RAID 状态、`df -kPT`（重点展示 `/volume*`）、`docker ps -a` 以及 `docker stats --no-stream`（按容器名合并 CPU% 与内存占用，失败自动忽略）。
+  - NAS 上用于 SSH 连接的账号需要加入 `docker` 用户组才能看到并操作容器，可在 NAS 上执行以下命令后重新登录使其生效：
+
+    ```bash
+    sudo usermod -aG docker <用户名>
+    ```
+
+  - 容器操作默认关闭（`DOCKER_ACTIONS_ENABLED=false`），开启后仅允许 `POST /api/nas/docker/:name/:action` 执行 `start` / `stop` / `restart`（严禁 `rm`、`exec`、`pull`、`run`、`kill` 或任意命令）。容器名须同时通过正则白名单 `/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/` 与实时 `docker ps -a --format '{{.Names}}'` 校验，且使用固定命令模板拼接（`docker start|stop|restart -- '<name>'`）。
+  - `DOCKER_PROTECTED_CONTAINERS`（默认 `homedash`）中的受保护容器禁止 `stop` / `restart`（返回 `403`），所有操作尝试（含被拒绝请求）都会以 JSON Lines 追加写入 `DOCKER_AUDIT_FILE`（默认 `./data/docker-audit.log`），并可通过 `GET /api/nas/docker/audit` 只读查看。
+  - `GET /api/nas/docker/:name/logs?tail=200`（`tail` 限制 `1..1000`）用于只读查看容器日志，需登录但无需开启 `DOCKER_ACTIONS_ENABLED`。
+- **多实例下载器（qBittorrent + Transmission 只读）**：
+  - 在 `/settings` 页面的“集成配置 -> 下载器”区可管理多个 qBittorrent / Transmission 实例及用途标签（`download` 下载 / `brush` 刷流 / `seed` 保种）；若尚未保存 `downloaders` 数组但存在旧单实例 `qbittorrent` 配置（`.env` `QBIT_*` 或文件 `qbittorrent` 段），系统会自动迁移生成 `qbittorrent-default` 实例；旧接口 `/api/qbittorrent/summary` 保留为兼容别名（优先读取旧配置，否则返回第一个启用 qB 实例摘要）。
+  - **qBittorrent**（WebUI API v2 只读）：按实例隔离 `SID` 会话（遇 `403` 自动重登一次），仅调用只读白名单接口（`/api/v2/app/version`、`/api/v2/transfer/info`、`/api/v2/sync/maindata`、`/api/v2/torrents/info`、`/api/v2/torrents/categories`）。
+  - **Transmission**（RPC 只读）：请求 `POST {url}/transmission/rpc`（支持 Basic 认证与 `409` `X-Transmission-Session-Id` 按实例缓存重试一次），严格限制方法白名单（`session-get`、`session-stats`、`torrent-get`）与只读字段白名单，严禁 `torrent-start/stop/remove/set/add` 等任何写操作。
 - **MoviePilot（以官方仓库 `jxxghp/MoviePilot` 当前默认分支 v3 为准）**：
   - 接口全部来源于官方仓库 `jxxghp/MoviePilot` v3 分支，使用 `X-API-KEY` 请求头认证，严格限制只读 GET 白名单：`GET /api/v1/subscribe/list`、`GET /api/v1/history/transfer`、`GET /api/v1/download/`、`GET /api/v1/site/`（服务端显式剥离 `cookie`/`ua`/`apikey`/`token` 等敏感字段，仅保留 `id`/`name`/`domain`/`is_active`/`pri`）、`GET /api/v1/site/statistic`、`GET /api/v1/dashboard/downloader2`。绝不调用 `/api/v1/site/test/*`、`/download/start|stop`、`/transfer/now`、`/system/runscheduler*` 等有副作用接口。
 

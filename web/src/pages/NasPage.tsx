@@ -1,20 +1,45 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
 import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Container,
   Cpu,
+  FileText,
   HardDrive,
+  Info,
   MemoryStick,
+  Play,
   RotateCw,
   Server,
+  Shield,
+  Square,
   Thermometer,
+  X,
+  XCircle,
 } from 'lucide-react';
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from '@/components/common';
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  StatusBadge,
+  type StatusVariant,
+} from '@/components/common';
 import { formatBytes, formatDateTime, formatUptime } from '@/components/devices/device-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '@/hooks/useApi';
-import { fetchNasStatus } from '@/lib/api';
+import {
+  executeNasDockerAction,
+  fetchNasDockerAudit,
+  fetchNasDockerLogs,
+  fetchNasStatus,
+  type DockerAction,
+  type DockerAuditEntry,
+  type NasDockerContainer,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 function getTempVariant(tempC: number): 'error' | 'warning' | 'success' {
@@ -35,11 +60,78 @@ function getBarClassByThreshold(percent: number, warnAt: number, dangerAt: numbe
   return 'bg-emerald-500';
 }
 
+function getContainerStatusBadge(container: NasDockerContainer): {
+  status: StatusVariant;
+  label: string;
+  stopped: boolean;
+} {
+  const state = container.state.toLowerCase();
+  if (state === 'running') {
+    return { status: 'success', label: '运行', stopped: false };
+  }
+  if (state === 'restarting') {
+    return { status: 'warning', label: '重启中', stopped: false };
+  }
+  if (state === 'exited' || state === 'created' || state === 'dead') {
+    return { status: 'unknown', label: '已停止', stopped: true };
+  }
+  return { status: 'error', label: '异常', stopped: false };
+}
+
+function getAuditResultBadge(result: DockerAuditEntry['result']): {
+  status: StatusVariant;
+  label: string;
+} {
+  if (result === 'success') return { status: 'success', label: '成功' };
+  if (result === 'rejected') return { status: 'warning', label: '已拒绝' };
+  return { status: 'error', label: '失败' };
+}
+
 export function NasPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const fetcher = useCallback((signal: AbortSignal) => fetchNasStatus({ signal }), []);
   const { data, loading, error, refetch } = useApi(fetcher);
+
+  // Docker 操作状态
+  const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    container: string;
+    action: 'stop' | 'restart';
+  } | null>(null);
+
+  // 日志弹窗状态
+  const [logsModal, setLogsModal] = useState<{
+    container: string;
+    tail: number;
+    loading: boolean;
+    logs: string;
+    fetchedAt?: string;
+    error?: string;
+  } | null>(null);
+
+  // 审计记录折叠区状态
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditEntries, setAuditEntries] = useState<DockerAuditEntry[] | null>(null);
+
+  const loadAuditEntries = async () => {
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const res = await fetchNasDockerAudit({ limit: 20 });
+      setAuditEntries(res.entries);
+    } catch (err) {
+      setAuditError(err instanceof Error ? err.message : '加载审计记录失败');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
 
   const handleForceRefresh = async () => {
     setRefreshing(true);
@@ -53,11 +145,75 @@ export function NasPage() {
     }
   };
 
+  const handleRunDockerAction = async (container: string, action: DockerAction) => {
+    const key = `${container}:${action}`;
+    setActionLoadingKey(key);
+    setActionFeedback(null);
+    setConfirmModal(null);
+
+    try {
+      const res = await executeNasDockerAction(container, action);
+      setActionFeedback({ ok: true, message: res.message });
+      await fetchNasStatus({ refresh: true });
+      await refetch();
+      if (auditOpen) {
+        await loadAuditEntries();
+      }
+    } catch (err) {
+      setActionFeedback({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Docker 容器操作失败',
+      });
+      if (auditOpen) {
+        await loadAuditEntries();
+      }
+    } finally {
+      setActionLoadingKey(null);
+    }
+  };
+
+  const loadContainerLogs = async (container: string, tail: number) => {
+    setLogsModal({
+      container,
+      tail,
+      loading: true,
+      logs: '',
+    });
+    try {
+      const res = await fetchNasDockerLogs(container, { tail });
+      setLogsModal({
+        container,
+        tail: res.tail,
+        loading: false,
+        logs: res.logs,
+        fetchedAt: res.fetchedAt,
+      });
+    } catch (err) {
+      setLogsModal({
+        container,
+        tail,
+        loading: false,
+        logs: '',
+        error: err instanceof Error ? err.message : '获取容器日志失败',
+      });
+    }
+  };
+
+  const handleToggleAudit = async () => {
+    const nextOpen = !auditOpen;
+    setAuditOpen(nextOpen);
+    if (nextOpen) {
+      await loadAuditEntries();
+    }
+  };
+
+  const actionsEnabled = Boolean(data?.data?.docker.actionsEnabled);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="NAS"
-        description="Linux NAS 只读硬件状态、传感器温度、RAID 阵列、存储卷与 Docker 容器监控。"
+        description="Linux NAS 只读硬件状态、传感器温度、RAID 阵列、存储卷与 Docker 容器管理。"
         actions={
           <Button
             type="button"
@@ -392,16 +548,51 @@ export function NasPage() {
             </CardContent>
           </Card>
 
-          {/* Docker 卡 */}
+          {/* Docker 容器卡片网格 */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Container className="size-4 text-muted-foreground" aria-hidden="true" />
-                <span>Docker 容器</span>
-              </CardTitle>
-              <CardDescription>只读列出宿主机上的 Docker 容器状态。</CardDescription>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Container className="size-4 text-muted-foreground" aria-hidden="true" />
+                  <span>Docker 容器</span>
+                </CardTitle>
+                {data.data.docker.available && !actionsEnabled ? (
+                  <StatusBadge status="unknown" label="Docker 操作未开启" showDot={false} />
+                ) : null}
+              </div>
+              <CardDescription>
+                查看宿主机 Docker 容器状态、实时资源占用与只读日志；受保护容器不允许停止或重启。
+              </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              {data.data.docker.available && !actionsEnabled ? (
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  <Info className="size-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    Docker 操作未开启，当前仅支持只读状态与日志查看（可在环境变量设置{' '}
+                    <code>DOCKER_ACTIONS_ENABLED=true</code> 启用受限操作）。
+                  </span>
+                </div>
+              ) : null}
+
+              {actionFeedback ? (
+                <div
+                  role={actionFeedback.ok ? 'status' : 'alert'}
+                  className={
+                    actionFeedback.ok
+                      ? 'flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400'
+                      : 'flex items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400'
+                  }
+                >
+                  {actionFeedback.ok ? (
+                    <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                  ) : (
+                    <XCircle className="size-4 shrink-0" aria-hidden="true" />
+                  )}
+                  <span>{actionFeedback.message}</span>
+                </div>
+              ) : null}
+
               {!data.data.docker.available ? (
                 <EmptyState
                   title="Docker 信息不可用"
@@ -415,50 +606,360 @@ export function NasPage() {
                   icon={Container}
                 />
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-muted-foreground">
-                        <th className="py-2 pr-4 font-medium">容器名称</th>
-                        <th className="py-2 pr-4 font-medium">镜像</th>
-                        <th className="py-2 pr-4 font-medium">状态</th>
-                        <th className="py-2 pr-4 font-medium">运行时长</th>
-                        <th className="py-2 font-medium">端口映射</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {data.data.docker.containers.map((c) => (
-                        <tr key={c.id}>
-                          <td className="py-2.5 pr-4 font-medium text-foreground">{c.name}</td>
-                          <td className="py-2.5 pr-4 font-mono text-muted-foreground">{c.image}</td>
-                          <td className="py-2.5 pr-4">
-                            <StatusBadge
-                              status={
-                                c.state === 'running'
-                                  ? 'success'
-                                  : c.state === 'exited' || c.state === 'dead'
-                                    ? 'error'
-                                    : 'warning'
-                              }
-                              label={c.status || c.state}
-                            />
-                          </td>
-                          <td className="py-2.5 pr-4 text-muted-foreground">
-                            {c.runningFor || '-'}
-                          </td>
-                          <td className="py-2.5 font-mono text-muted-foreground">
-                            {c.ports || '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {data.data.docker.containers.map((c) => {
+                    const badge = getContainerStatusBadge(c);
+                    const startKey = `${c.name}:start`;
+                    const stopKey = `${c.name}:stop`;
+                    const restartKey = `${c.name}:restart`;
+                    const isBusy =
+                      actionLoadingKey === startKey ||
+                      actionLoadingKey === stopKey ||
+                      actionLoadingKey === restartKey;
+
+                    return (
+                      <div
+                        key={c.id}
+                        className="flex flex-col justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4"
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="truncate text-sm font-semibold text-foreground">
+                                  {c.name}
+                                </span>
+                                {c.protected ? (
+                                  <StatusBadge status="info" label="受保护" showDot={false} />
+                                ) : null}
+                              </div>
+                              <div className="truncate font-mono text-[11px] text-muted-foreground">
+                                {c.image}
+                              </div>
+                            </div>
+                            <StatusBadge status={badge.status} label={badge.label} />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/40 p-2.5 text-xs">
+                            <div>
+                              <div className="text-[11px] text-muted-foreground">CPU</div>
+                              <div className="font-mono font-medium text-foreground">
+                                {c.cpuPercent || '-'}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-[11px] text-muted-foreground">内存</div>
+                              <div className="truncate font-mono font-medium text-foreground">
+                                {c.memUsage
+                                  ? `${c.memUsage}${c.memPercent ? ` (${c.memPercent})` : ''}`
+                                  : '-'}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-[11px] text-muted-foreground">运行时长</div>
+                              <div className="truncate text-foreground">{c.runningFor || '-'}</div>
+                            </div>
+                            <div>
+                              <div className="text-[11px] text-muted-foreground">端口</div>
+                              <div className="truncate font-mono text-foreground">
+                                {c.ports || '-'}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5">
+                          {actionsEnabled ? (
+                            badge.stopped ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label={`启动 ${c.name}`}
+                                disabled={isBusy}
+                                onClick={() => void handleRunDockerAction(c.name, 'start')}
+                              >
+                                <Play className="size-3.5" aria-hidden="true" />
+                                <span>{actionLoadingKey === startKey ? '启动中...' : '启动'}</span>
+                              </Button>
+                            ) : !c.protected ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  aria-label={`停止 ${c.name}`}
+                                  disabled={isBusy}
+                                  onClick={() =>
+                                    setConfirmModal({ container: c.name, action: 'stop' })
+                                  }
+                                >
+                                  <Square className="size-3.5" aria-hidden="true" />
+                                  <span>{actionLoadingKey === stopKey ? '停止中...' : '停止'}</span>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  aria-label={`重启 ${c.name}`}
+                                  disabled={isBusy}
+                                  onClick={() =>
+                                    setConfirmModal({ container: c.name, action: 'restart' })
+                                  }
+                                >
+                                  <RotateCw
+                                    className={
+                                      actionLoadingKey === restartKey
+                                        ? 'size-3.5 animate-spin'
+                                        : 'size-3.5'
+                                    }
+                                    aria-hidden="true"
+                                  />
+                                  <span>
+                                    {actionLoadingKey === restartKey ? '重启中...' : '重启'}
+                                  </span>
+                                </Button>
+                              </>
+                            ) : null
+                          ) : null}
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`日志 ${c.name}`}
+                            onClick={() => void loadContainerLogs(c.name, 200)}
+                          >
+                            <FileText className="size-3.5" aria-hidden="true" />
+                            <span>日志</span>
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          {/* 折叠式 Docker 操作审计日志 */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Shield className="size-4 text-muted-foreground" aria-hidden="true" />
+                  <CardTitle className="text-base">Docker 操作审计记录</CardTitle>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleToggleAudit()}
+                >
+                  {auditOpen ? (
+                    <>
+                      <ChevronUp className="size-4" aria-hidden="true" />
+                      <span>收起审计记录</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="size-4" aria-hidden="true" />
+                      <span>查看最近 20 条审计记录</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+              <CardDescription>
+                记录所有 Docker 容器启停与重启请求（包括被策略拒绝的操作）。
+              </CardDescription>
+            </CardHeader>
+            {auditOpen ? (
+              <CardContent>
+                {auditLoading ? (
+                  <LoadingState variant="skeleton" rows={3} message="正在加载审计记录..." />
+                ) : auditError ? (
+                  <ErrorState
+                    title="加载审计记录失败"
+                    message={auditError}
+                    onRetry={() => void loadAuditEntries()}
+                  />
+                ) : !auditEntries || auditEntries.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无 Docker 操作审计记录</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-muted-foreground">
+                          <th className="py-2 pr-4 font-medium">时间</th>
+                          <th className="py-2 pr-4 font-medium">操作者</th>
+                          <th className="py-2 pr-4 font-medium">来源 IP</th>
+                          <th className="py-2 pr-4 font-medium">容器</th>
+                          <th className="py-2 pr-4 font-medium">动作</th>
+                          <th className="py-2 pr-4 font-medium">结果</th>
+                          <th className="py-2 pr-4 font-medium">耗时</th>
+                          <th className="py-2 font-medium">备注</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/60">
+                        {auditEntries.map((entry, idx) => {
+                          const badge = getAuditResultBadge(entry.result);
+                          return (
+                            <tr key={`${entry.timestamp}-${entry.container}-${idx}`}>
+                              <td className="py-2 pr-4 text-muted-foreground">
+                                {formatDateTime(entry.timestamp)}
+                              </td>
+                              <td className="py-2 pr-4 font-medium text-foreground">
+                                {entry.username}
+                              </td>
+                              <td className="py-2 pr-4 font-mono text-muted-foreground">
+                                {entry.clientIp}
+                              </td>
+                              <td className="py-2 pr-4 font-mono text-foreground">
+                                {entry.container}
+                              </td>
+                              <td className="py-2 pr-4 font-mono text-muted-foreground">
+                                {entry.action}
+                              </td>
+                              <td className="py-2 pr-4">
+                                <StatusBadge status={badge.status} label={badge.label} />
+                              </td>
+                              <td className="py-2 pr-4 text-muted-foreground">
+                                {entry.durationMs} ms
+                              </td>
+                              <td className="py-2 text-muted-foreground">{entry.error ?? '-'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            ) : null}
+          </Card>
         </div>
       )}
+
+      {/* 停止 / 重启二次确认对话框 */}
+      {confirmModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="docker-confirm-title"
+        >
+          <Card className="w-full max-w-md shadow-xl">
+            <CardHeader>
+              <CardTitle id="docker-confirm-title" className="text-base">
+                {confirmModal.action === 'stop' ? '确认停止容器' : '确认重启容器'}
+              </CardTitle>
+              <CardDescription>
+                即将对容器 <code className="font-mono font-semibold">{confirmModal.container}</code>{' '}
+                执行{confirmModal.action === 'stop' ? '停止' : '重启'}操作，是否继续？
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmModal(null)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                variant={confirmModal.action === 'stop' ? 'destructive' : 'default'}
+                size="sm"
+                onClick={() =>
+                  void handleRunDockerAction(confirmModal.container, confirmModal.action)
+                }
+              >
+                {confirmModal.action === 'stop' ? '确认停止' : '确认重启'}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {/* 容器日志对话框 */}
+      {logsModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="docker-logs-title"
+        >
+          <Card className="flex max-h-[85vh] w-full max-w-3xl flex-col shadow-xl">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-3">
+              <div>
+                <CardTitle id="docker-logs-title" className="text-base">
+                  容器日志：{logsModal.container}
+                </CardTitle>
+                <CardDescription>
+                  {logsModal.fetchedAt
+                    ? `最近刷新：${formatDateTime(logsModal.fetchedAt)}`
+                    : '只读查看最近容器输出日志'}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="docker-logs-tail" className="text-xs text-muted-foreground">
+                  行数
+                </label>
+                <select
+                  id="docker-logs-tail"
+                  value={String(logsModal.tail)}
+                  onChange={(e) =>
+                    void loadContainerLogs(logsModal.container, Number(e.target.value))
+                  }
+                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                >
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={logsModal.loading}
+                  onClick={() => void loadContainerLogs(logsModal.container, logsModal.tail)}
+                >
+                  <RotateCw
+                    className={logsModal.loading ? 'size-3.5 animate-spin' : 'size-3.5'}
+                    aria-hidden="true"
+                  />
+                  <span>刷新</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="关闭日志弹窗"
+                  onClick={() => setLogsModal(null)}
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-auto">
+              {logsModal.loading ? (
+                <LoadingState variant="spinner" message="正在读取容器日志..." />
+              ) : logsModal.error ? (
+                <ErrorState
+                  title="获取容器日志失败"
+                  message={logsModal.error}
+                  onRetry={() => void loadContainerLogs(logsModal.container, logsModal.tail)}
+                />
+              ) : (
+                <pre className="max-h-[55vh] overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap">
+                  {logsModal.logs || '暂无日志输出'}
+                </pre>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 }

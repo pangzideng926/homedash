@@ -223,6 +223,9 @@ describe('配置分组校验与状态报告', () => {
       NAS_SSH_KEY_PATH: false,
       NAS_MOCK: false,
       NAS_CACHE_SECONDS: false,
+      DOCKER_ACTIONS_ENABLED: false,
+      DOCKER_PROTECTED_CONTAINERS: false,
+      DOCKER_AUDIT_FILE: false,
     });
     expect(partialStatus.modules.qbittorrent.status).toBe('incomplete');
     expect(partialStatus.modules.qbittorrent.keys.QBIT_PASSWORD).toBe(true);
@@ -265,6 +268,30 @@ describe('配置分组校验与状态报告', () => {
         WIN_SSH_TIMEOUT_MS: '0',
       }),
     ).toThrow(ConfigError);
+  });
+
+  it('解析下载器与 Docker 受限操作环境变量，并支持 QBIT_* 超时/缓存回退', () => {
+    const cfg = parseConfig({
+      ...BASE_ENV,
+      DOWNLOADERS_MOCK: 'true',
+      QBIT_CACHE_SECONDS: '25',
+      QBIT_TIMEOUT_MS: '12000',
+      DOCKER_ACTIONS_ENABLED: 'true',
+      DOCKER_PROTECTED_CONTAINERS: 'homedash, postgres, redis ',
+      DOCKER_AUDIT_FILE: './data/custom-docker-audit.log',
+    });
+
+    expect(cfg.downloaders).toEqual({
+      DOWNLOADERS_MOCK: true,
+      DOWNLOADER_CACHE_SECONDS: 25,
+      DOWNLOADER_TIMEOUT_MS: 12000,
+    });
+    expect(cfg.nas?.DOCKER_ACTIONS_ENABLED).toBe(true);
+    expect(cfg.nas?.DOCKER_PROTECTED_CONTAINERS).toEqual(['homedash', 'postgres', 'redis']);
+    expect(cfg.nas?.DOCKER_AUDIT_FILE).toBe('./data/custom-docker-audit.log');
+
+    const status = getConfigStatus(cfg);
+    expect(status.modules.downloaders.status).toBe('configured');
   });
 });
 

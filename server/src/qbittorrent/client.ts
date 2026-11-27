@@ -43,6 +43,7 @@ export function assertQbitRequestAllowed(method: string, pathname: string): void
 }
 
 export interface QbitClientConfig {
+  instanceId?: string;
   url: string;
   username: string;
   password: string;
@@ -55,6 +56,7 @@ export interface QbitClient {
   getMaindata: (cfg: QbitClientConfig) => Promise<Record<string, unknown> | null>;
   getTorrentsInfo: (cfg: QbitClientConfig) => Promise<Array<Record<string, unknown>>>;
   getCategories: (cfg: QbitClientConfig) => Promise<Record<string, unknown>>;
+  clearSession: (instanceId: string) => void;
   clearSessions: () => void;
 }
 
@@ -113,7 +115,8 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
   const inFlightLogin = new Map<string, Promise<string>>();
 
   function buildSessionKey(cfg: QbitClientConfig): string {
-    return `${cfg.url.replace(/\/+$/, '')}|${cfg.username}`;
+    const scope = cfg.instanceId ?? 'default';
+    return `${scope}|${cfg.url.replace(/\/+$/, '')}|${cfg.username}`;
   }
 
   async function fetchWithTimeout(
@@ -315,6 +318,15 @@ export function createQbitClient(fetchFn: typeof fetch = fetch): QbitClient {
         return data as Record<string, unknown>;
       } catch {
         return {};
+      }
+    },
+
+    clearSession(instanceId: string): void {
+      const prefix = `${instanceId}|`;
+      for (const key of sidCache.keys()) {
+        if (key.startsWith(prefix)) {
+          sidCache.delete(key);
+        }
       }
     },
 

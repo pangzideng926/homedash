@@ -151,6 +151,18 @@ export function createMockNasStatus(
           available: true,
           containers: [
             {
+              id: 'demo-homedash',
+              name: 'homedash',
+              image: 'homedash:latest',
+              state: 'running',
+              status: 'Up 18 days',
+              runningFor: '18 days ago',
+              ports: '0.0.0.0:3000->3000/tcp',
+              cpuPercent: '0.45%',
+              memUsage: '68.2MiB / 16GiB',
+              memPercent: '0.42%',
+            },
+            {
               id: 'demo-qb',
               name: 'qbittorrent',
               image: 'linuxserver/qbittorrent:latest',
@@ -158,6 +170,9 @@ export function createMockNasStatus(
               status: 'Up 12 days',
               runningFor: '12 days ago',
               ports: '0.0.0.0:8080->8080/tcp',
+              cpuPercent: '4.12%',
+              memUsage: '512MiB / 16GiB',
+              memPercent: '3.12%',
             },
             {
               id: 'demo-mp',
@@ -166,7 +181,19 @@ export function createMockNasStatus(
               state: 'running',
               status: 'Up 12 days',
               runningFor: '12 days ago',
-              ports: '0.0.0.0:3000->3000/tcp',
+              ports: '0.0.0.0:3001->3000/tcp',
+              cpuPercent: '1.85%',
+              memUsage: '380MiB / 16GiB',
+              memPercent: '2.31%',
+            },
+            {
+              id: 'demo-wt',
+              name: 'watchtower',
+              image: 'containrrr/watchtower:latest',
+              state: 'exited',
+              status: 'Exited (0) 2 days ago',
+              runningFor: '30 days ago',
+              ports: '',
             },
           ],
         }
@@ -201,6 +228,25 @@ export function createNasService(
   let cachedEntry: CacheEntry | null = null;
   let inFlightPromise: Promise<NasStatusResponse> | null = null;
 
+  function enrichDockerMetadata(data: NasStatusData): NasStatusData {
+    const actionsEnabled = Boolean(config.nas?.DOCKER_ACTIONS_ENABLED);
+    const protectedContainers = integrationsStore.getProtectedDockerContainers();
+    const protectedSet = new Set(protectedContainers);
+
+    return {
+      ...data,
+      docker: {
+        ...data.docker,
+        actionsEnabled,
+        protectedContainers,
+        containers: data.docker.containers.map((container) => ({
+          ...container,
+          protected: protectedSet.has(container.name),
+        })),
+      },
+    };
+  }
+
   async function collectOnce(): Promise<NasStatusResponse> {
     const resolved = integrationsStore.resolveNasConfig();
     if (resolved.mock) {
@@ -211,7 +257,7 @@ export function createNasService(
         online: true,
         checkedAt: new Date(nowMs).toISOString(),
         cached: false,
-        data: createMockNasStatus(nowMs),
+        data: enrichDockerMetadata(createMockNasStatus(nowMs)),
       };
     }
 
@@ -270,7 +316,7 @@ export function createNasService(
       }
 
       const finishedAt = getNow();
-      const data = parseNasStatusOutput(execResult.stdout, finishedAt);
+      const data = enrichDockerMetadata(parseNasStatusOutput(execResult.stdout, finishedAt));
       const success: NasStatusResponse = {
         configured: true,
         mock: false,
