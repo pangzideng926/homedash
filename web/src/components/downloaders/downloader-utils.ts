@@ -1,5 +1,11 @@
 import type { StatusVariant } from '@/components/common';
-import type { DownloaderActiveTaskState, DownloaderTag, DownloaderType } from '@/lib/api';
+import type {
+  DownloaderActiveTaskState,
+  DownloaderInstanceSummary,
+  DownloadersSummaryTotals,
+  DownloaderTag,
+  DownloaderType,
+} from '@/lib/api';
 
 export const DOWNLOADER_TAG_OPTIONS: ReadonlyArray<{
   value: DownloaderTag;
@@ -70,4 +76,46 @@ export function getActiveTaskStatusVariant(state: DownloaderActiveTaskState): St
   if (state === '出错') return 'error';
   if (state === '卡住' || state === '元数据') return 'warning';
   return 'unknown';
+}
+
+export function computeFilteredTotals(
+  instances: readonly DownloaderInstanceSummary[],
+): DownloadersSummaryTotals {
+  const counts = {
+    seeding: 0,
+    downloading: 0,
+    paused: 0,
+    error: 0,
+    stalled: 0,
+    total: 0,
+  };
+  let onlineInstances = 0;
+  let upSpeed = 0;
+  let dlSpeed = 0;
+  let totalSize = 0;
+
+  for (const item of instances) {
+    if (item.online) {
+      onlineInstances += 1;
+    }
+    upSpeed += item.upSpeed;
+    dlSpeed += item.dlSpeed;
+    totalSize += item.totalSize;
+    counts.seeding += item.counts.seeding;
+    counts.downloading += item.counts.downloading;
+    counts.paused += item.counts.paused;
+    counts.error += item.counts.error;
+    counts.stalled += item.counts.stalled;
+    counts.total += item.counts.total;
+  }
+
+  return {
+    totalInstances: instances.length,
+    onlineInstances,
+    offlineInstances: instances.length - onlineInstances,
+    upSpeed,
+    dlSpeed,
+    totalSize,
+    counts,
+  };
 }

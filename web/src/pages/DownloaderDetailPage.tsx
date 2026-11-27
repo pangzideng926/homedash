@@ -66,7 +66,7 @@ export function DownloaderDetailPage() {
           className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-3.5" aria-hidden="true" />
-          <span>返回下载与做种</span>
+          <span>返回下载器</span>
         </Link>
       </div>
 

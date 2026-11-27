@@ -360,6 +360,9 @@ describe('homedash 前端认证与控制台', () => {
 
     expect(await screen.findByRole('heading', { name: '总览' })).toBeInTheDocument();
     expect(screen.getByText('admin')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '影视' })).toHaveAttribute('href', '/media');
+    expect(screen.getByRole('link', { name: '刷流' })).toHaveAttribute('href', '/brush');
+    expect(screen.getByRole('link', { name: '下载器' })).toHaveAttribute('href', '/seeding');
     expect(screen.getByText('NAS 状态')).toBeInTheDocument();
     expect(screen.getByText('下载与做种', { selector: 'h3' })).toBeInTheDocument();
     expect(screen.getByText('影视订阅')).toBeInTheDocument();

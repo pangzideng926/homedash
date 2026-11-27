@@ -5,6 +5,7 @@ export const CONFIG_MODULE_NAMES = [
   'downloaders',
   'qbittorrent',
   'moviepilot',
+  'media',
   'devices',
   'windows',
   'vps',
@@ -17,6 +18,7 @@ export const OPTIONAL_CONFIG_MODULES = [
   'downloaders',
   'qbittorrent',
   'moviepilot',
+  'media',
   'devices',
   'windows',
   'vps',
@@ -31,6 +33,7 @@ export const CONFIG_MODULE_LABELS: Readonly<Record<ConfigModuleName, string>> = 
   downloaders: '下载器',
   qbittorrent: 'qBittorrent（旧版兼容）',
   moviepilot: 'MoviePilot',
+  media: '影视',
   devices: '家用设备',
   windows: '家用 Windows 主机（旧版兼容）',
   vps: 'VPS',
@@ -90,6 +93,12 @@ export const CONFIG_MODULE_KEYS = {
     'MOVIEPILOT_CACHE_SECONDS',
     'MOVIEPILOT_TIMEOUT_MS',
     'MOVIEPILOT_ACTIVE_LIMIT',
+  ],
+  media: [
+    'MEDIA_CACHE_SECONDS',
+    'MEDIA_IMAGE_HOSTS',
+    'MEDIA_IMAGE_CACHE_DIR',
+    'MEDIA_IMAGE_CACHE_MAX',
   ],
   devices: [
     'DEVICES_FILE',
@@ -229,6 +238,13 @@ export interface MoviepilotSectionConfig {
   MOVIEPILOT_ACTIVE_LIMIT: number;
 }
 
+export interface MediaSectionConfig {
+  MEDIA_CACHE_SECONDS: number;
+  MEDIA_IMAGE_HOSTS: string[];
+  MEDIA_IMAGE_CACHE_DIR: string;
+  MEDIA_IMAGE_CACHE_MAX: number;
+}
+
 export interface DevicesSectionConfig {
   DEVICES_FILE?: string;
   DEVICES_READONLY: boolean;
@@ -259,6 +275,7 @@ export interface AppConfig {
   downloaders?: DownloadersSectionConfig;
   qbittorrent?: QbittorrentSectionConfig;
   moviepilot?: MoviepilotSectionConfig;
+  media?: MediaSectionConfig;
   devices?: DevicesSectionConfig;
   windows?: WindowsSectionConfig;
   vps?: VpsSectionConfig;

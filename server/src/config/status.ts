@@ -150,6 +150,17 @@ function resolveOptionalModuleStatus(
     return resolveRequiredKeysOrMockStatus(isMockEnabled, QBIT_REQUIRED_KEYS, presence);
   }
 
+  if (moduleId === 'media') {
+    if (moduleConfiguredOverrides?.media) {
+      return 'configured';
+    }
+    const isMpMock = isAppConfig(source)
+      ? Boolean(source.moviepilot?.MOVIEPILOT_MOCK)
+      : isEnvTruthy((source ?? process.env).MOVIEPILOT_MOCK);
+    const mpStatus = resolveRequiredKeysOrMockStatus(isMpMock, MOVIEPILOT_REQUIRED_KEYS, presence);
+    return mpStatus === 'configured' ? 'configured' : 'unconfigured';
+  }
+
   const isMockEnabled = isAppConfig(source)
     ? Boolean(source.moviepilot?.MOVIEPILOT_MOCK)
     : isEnvTruthy((source ?? process.env).MOVIEPILOT_MOCK);
