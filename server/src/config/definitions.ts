@@ -69,7 +69,12 @@ export const CONFIG_MODULE_KEYS = {
     'DOCKER_AUDIT_FILE',
     'DOCKER_ACTION_TIMEOUT_MS',
   ],
-  downloaders: ['DOWNLOADERS_MOCK', 'DOWNLOADER_CACHE_SECONDS', 'DOWNLOADER_TIMEOUT_MS'],
+  downloaders: [
+    'DOWNLOADERS_MOCK',
+    'DOWNLOADER_CACHE_SECONDS',
+    'DOWNLOADER_TIMEOUT_MS',
+    'DOWNLOADER_ACTIVE_TASKS_LIMIT',
+  ],
   qbittorrent: [
     'QBIT_URL',
     'QBIT_USERNAME',
@@ -84,6 +89,7 @@ export const CONFIG_MODULE_KEYS = {
     'MOVIEPILOT_MOCK',
     'MOVIEPILOT_CACHE_SECONDS',
     'MOVIEPILOT_TIMEOUT_MS',
+    'MOVIEPILOT_ACTIVE_LIMIT',
   ],
   devices: [
     'DEVICES_FILE',
@@ -202,6 +208,7 @@ export interface DownloadersSectionConfig {
   DOWNLOADERS_MOCK: boolean;
   DOWNLOADER_CACHE_SECONDS: number;
   DOWNLOADER_TIMEOUT_MS: number;
+  DOWNLOADER_ACTIVE_TASKS_LIMIT: number;
 }
 
 export interface QbittorrentSectionConfig {
@@ -219,6 +226,7 @@ export interface MoviepilotSectionConfig {
   MOVIEPILOT_MOCK: boolean;
   MOVIEPILOT_CACHE_SECONDS: number;
   MOVIEPILOT_TIMEOUT_MS: number;
+  MOVIEPILOT_ACTIVE_LIMIT: number;
 }
 
 export interface DevicesSectionConfig {

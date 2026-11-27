@@ -23,6 +23,7 @@ export const TRANSMISSION_TORRENT_FIELDS = [
   'percentDone',
   'rateUpload',
   'rateDownload',
+  'eta',
   'uploadedEver',
   'downloadedEver',
   'uploadRatio',

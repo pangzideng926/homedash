@@ -172,4 +172,83 @@ describe('OverviewPage 总览三张汇总卡', () => {
 
     expect(screen.getByText('未配置，去设置')).toBeInTheDocument();
   });
+
+  it('在线 MoviePilot 汇总卡显示“下载中 N / 待整理 M”', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith('/api/moviepilot/summary')) {
+        return jsonResponse({
+          configured: true,
+          mock: false,
+          online: true,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+          data: {
+            subscribes: [
+              {
+                id: 1,
+                name: '剧集',
+                year: '2025',
+                type: '电视剧',
+                season: 1,
+                state: 'R',
+                totalEpisode: 10,
+                lackEpisode: 1,
+                lastUpdate: '',
+              },
+            ],
+            transfers: [],
+            transferTotal: 0,
+            downloads: [],
+            activeDownloads: [],
+            activeDownloadsTotal: 3,
+            transferQueue: { available: true, items: [], total: 2 },
+            transferQueueTotal: 2,
+            sites: [],
+            downloader: null,
+          },
+        });
+      }
+      if (url.startsWith('/api/nas/status') || url.startsWith('/api/downloaders/summary')) {
+        return jsonResponse({
+          configured: false,
+          mock: false,
+          online: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+        });
+      }
+      if (url.startsWith('/api/devices/status')) {
+        return jsonResponse({
+          configured: false,
+          source: 'unconfigured',
+          readonly: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          devices: [],
+          summary: { total: 0, online: 0, offline: 0 },
+          errorCode: 'UNCONFIGURED',
+        });
+      }
+      if (url.endsWith('/api/vps')) {
+        return jsonResponse({
+          configured: false,
+          readonly: false,
+          timezone: 'Asia/Shanghai',
+          servers: [],
+          summary: { total: 0, expired: 0, within7Days: 0, within30Days: 0, invalid: 0 },
+          errorCode: 'UNCONFIGURED',
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    render(
+      <MemoryRouter>
+        <OverviewPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('1 订阅')).toBeInTheDocument();
+    expect(screen.getByText('订阅 1 · 下载中 3 / 待整理 2')).toBeInTheDocument();
+  });
 });

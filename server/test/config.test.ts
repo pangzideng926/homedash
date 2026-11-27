@@ -286,6 +286,7 @@ describe('配置分组校验与状态报告', () => {
       DOWNLOADERS_MOCK: true,
       DOWNLOADER_CACHE_SECONDS: 25,
       DOWNLOADER_TIMEOUT_MS: 12000,
+      DOWNLOADER_ACTIVE_TASKS_LIMIT: 10,
     });
     expect(cfg.nas?.DOCKER_ACTIONS_ENABLED).toBe(true);
     expect(cfg.nas?.DOCKER_PROTECTED_CONTAINERS).toEqual(['homedash', 'postgres', 'redis']);
@@ -320,6 +321,38 @@ describe('配置分组校验与状态报告', () => {
       }
       expect(caughtError).toBeInstanceOf(ConfigError);
       expect(formatConfigError(caughtError as ConfigError)).toContain('DOCKER_ACTION_TIMEOUT_MS');
+    }
+  });
+
+  it('校验 DOWNLOADER_ACTIVE_TASKS_LIMIT 与 MOVIEPILOT_ACTIVE_LIMIT 默认值 10 与范围 1..100', () => {
+    for (const validValue of ['1', '10', '100']) {
+      const cfg = parseConfig({
+        ...BASE_ENV,
+        DOWNLOADER_ACTIVE_TASKS_LIMIT: validValue,
+        MOVIEPILOT_ACTIVE_LIMIT: validValue,
+      });
+      expect(cfg.downloaders?.DOWNLOADER_ACTIVE_TASKS_LIMIT).toBe(Number(validValue));
+      expect(cfg.moviepilot?.MOVIEPILOT_ACTIVE_LIMIT).toBe(Number(validValue));
+      const status = getConfigStatus(cfg);
+      expect(status.modules.downloaders.keys.DOWNLOADER_ACTIVE_TASKS_LIMIT).toBe(true);
+      expect(status.modules.moviepilot.keys.MOVIEPILOT_ACTIVE_LIMIT).toBe(true);
+      expect(status.modules.downloaders.status).toBe('unconfigured');
+      expect(status.modules.moviepilot.status).toBe('unconfigured');
+    }
+
+    for (const invalidValue of ['0', '-1', '101', '10.5', 'abc']) {
+      expect(() =>
+        parseConfig({
+          ...BASE_ENV,
+          DOWNLOADER_ACTIVE_TASKS_LIMIT: invalidValue,
+        }),
+      ).toThrow(ConfigError);
+      expect(() =>
+        parseConfig({
+          ...BASE_ENV,
+          MOVIEPILOT_ACTIVE_LIMIT: invalidValue,
+        }),
+      ).toThrow(ConfigError);
     }
   });
 });
