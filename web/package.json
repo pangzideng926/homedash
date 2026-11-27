@@ -1,0 +1,12 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node -e \"console.log('web 前端脚手架占位：待下一步完善')\"",
+    "build": "node -e \"console.log('web 构建占位：待下一步完善')\"",
+    "test": "node -e \"console.log('web 测试占位：待下一步完善')\"",
+    "lint": "node -e \"console.log('web lint 占位：待下一步完善')\"",
+    "typecheck": "node -e \"console.log('web typecheck 占位：待下一步完善')\""
+  }
+}

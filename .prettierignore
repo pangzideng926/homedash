@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+server/drizzle
+data
+*.db
+*.db-shm
+*.db-wal
