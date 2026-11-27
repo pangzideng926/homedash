@@ -25,7 +25,7 @@ function main(): void {
 
   const logger = createSafeLogger(collectSecretValues(config));
   const database = createDatabase(config.app.DATABASE_URL);
-  const app = createApp(config, database.db);
+  const app = createApp(config, database.db, { logger });
 
   const server = serve(
     {

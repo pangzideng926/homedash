@@ -31,7 +31,16 @@ export const CONFIG_MODULE_LABELS: Readonly<Record<ConfigModuleName, string>> = 
 };
 
 export const CONFIG_MODULE_KEYS = {
-  app: ['PORT', 'HOST', 'NODE_ENV', 'DATABASE_URL', 'WEB_DIST_DIR', 'COOKIE_SECURE', 'TRUST_PROXY'],
+  app: [
+    'PORT',
+    'HOST',
+    'NODE_ENV',
+    'DATABASE_URL',
+    'WEB_DIST_DIR',
+    'COOKIE_SECURE',
+    'TRUST_PROXY',
+    'TZ_DISPLAY',
+  ],
   auth: [
     'ADMIN_USERNAME',
     'ADMIN_PASSWORD_HASH',
@@ -43,9 +52,24 @@ export const CONFIG_MODULE_KEYS = {
   nas: ['NAS_SSH_HOST', 'NAS_SSH_PORT', 'NAS_SSH_USER', 'NAS_SSH_KEY_PATH'],
   qbittorrent: ['QBIT_URL', 'QBIT_USERNAME', 'QBIT_PASSWORD'],
   moviepilot: ['MOVIEPILOT_URL', 'MOVIEPILOT_API_TOKEN'],
-  windows: ['WIN_SSH_HOST', 'WIN_SSH_PORT', 'WIN_SSH_USER', 'WIN_SSH_KEY_PATH'],
-  vps: ['VPS_LIST_FILE'],
+  windows: [
+    'WIN_SSH_HOST',
+    'WIN_SSH_PORT',
+    'WIN_SSH_USER',
+    'WIN_SSH_KEY_PATH',
+    'WIN_SSH_TIMEOUT_MS',
+    'WIN_CACHE_SECONDS',
+    'WIN_MOCK',
+  ],
+  vps: ['VPS_LIST_FILE', 'VPS_READONLY'],
 } as const satisfies Record<ConfigModuleName, readonly string[]>;
+
+export const WINDOWS_SSH_REQUIRED_KEYS = [
+  'WIN_SSH_HOST',
+  'WIN_SSH_PORT',
+  'WIN_SSH_USER',
+  'WIN_SSH_KEY_PATH',
+] as const satisfies readonly (typeof CONFIG_MODULE_KEYS.windows)[number][];
 
 export type ConfigKey = (typeof CONFIG_MODULE_KEYS)[ConfigModuleName][number];
 
@@ -87,6 +111,7 @@ export interface AppSectionConfig {
   WEB_DIST_DIR: string;
   COOKIE_SECURE: boolean;
   TRUST_PROXY: boolean;
+  TZ_DISPLAY: string;
 }
 
 export interface AuthSectionConfig {
@@ -118,14 +143,18 @@ export interface MoviepilotSectionConfig {
 }
 
 export interface WindowsSectionConfig {
-  WIN_SSH_HOST: string;
-  WIN_SSH_PORT: number;
-  WIN_SSH_USER: string;
-  WIN_SSH_KEY_PATH: string;
+  WIN_SSH_HOST?: string;
+  WIN_SSH_PORT?: number;
+  WIN_SSH_USER?: string;
+  WIN_SSH_KEY_PATH?: string;
+  WIN_SSH_TIMEOUT_MS: number;
+  WIN_CACHE_SECONDS: number;
+  WIN_MOCK: boolean;
 }
 
 export interface VpsSectionConfig {
   VPS_LIST_FILE: string;
+  VPS_READONLY: boolean;
 }
 
 export interface AppConfig {

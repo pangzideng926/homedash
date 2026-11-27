@@ -1,0 +1,34 @@
+{
+  "servers": [
+    {
+      "id": "demo-vps-1",
+      "name": "示例服务器 A（香港线路）",
+      "provider": "Example Cloud",
+      "expiresAt": "2026-12-01",
+      "price": 39.9,
+      "currency": "CNY",
+      "renewUrl": "https://billing.example.com/renew/demo-vps-1",
+      "note": "月付节点，到期前注意续费"
+    },
+    {
+      "id": "demo-vps-2",
+      "name": "示例服务器 B（新加坡）",
+      "provider": "DemoHost",
+      "expiresAt": "2026-12-20",
+      "price": 5.5,
+      "currency": "USD",
+      "renewUrl": "https://portal.example.com/services/demo-vps-2",
+      "note": "轻量应用实例"
+    },
+    {
+      "id": "demo-vps-3",
+      "name": "示例服务器 C（年付备机）",
+      "provider": "Sample Networks",
+      "expiresAt": "2027-06-30",
+      "price": 199,
+      "currency": "CNY",
+      "renewUrl": null,
+      "note": null
+    }
+  ]
+}

@@ -249,6 +249,44 @@ describe('homedash 前端认证与控制台', () => {
         loggedIn = false;
         return jsonResponse({ ok: true });
       }
+      if (url.endsWith('/api/vps')) {
+        return jsonResponse({
+          configured: true,
+          readonly: false,
+          timezone: 'Asia/Shanghai',
+          summary: { total: 2, expired: 0, within7Days: 1, within30Days: 1, invalid: 0 },
+          servers: [
+            {
+              id: 'demo-1',
+              name: '香港节点',
+              provider: 'Example Cloud',
+              expiresAt: '2026-12-01',
+              price: 39,
+              currency: 'CNY',
+              renewUrl: null,
+              note: null,
+              daysLeft: 4,
+              level: 'danger',
+            },
+          ],
+        });
+      }
+      if (url.startsWith('/api/windows/status')) {
+        return jsonResponse({
+          online: true,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+          data: {
+            hostname: 'DEMO-PC',
+            os: 'Windows 11',
+            bootTime: '2026-11-24T00:00:00.000Z',
+            uptimeSeconds: 10000,
+            cpu: { model: 'Demo CPU', loadPercent: 25 },
+            memory: { totalBytes: 100, freeBytes: 50, usedPercent: 50 },
+            disks: [],
+          },
+        });
+      }
       return jsonResponse({ error: '接口不存在' }, 404);
     });
 
@@ -270,7 +308,10 @@ describe('homedash 前端认证与控制台', () => {
     expect(screen.getByText('家用电脑', { selector: 'h3' })).toBeInTheDocument();
     expect(screen.getByText('VPS 到期')).toBeInTheDocument();
     expect(screen.getByText('最近告警')).toBeInTheDocument();
-    expect(screen.getAllByText('暂无数据')).toHaveLength(5);
+    expect(await screen.findByText('CPU 25%')).toBeInTheDocument();
+    expect(await screen.findByText('2 台')).toBeInTheDocument();
+    expect(screen.getByText(/最近到期：香港节点/)).toBeInTheDocument();
+    expect(screen.getAllByText('暂无数据')).toHaveLength(3);
 
     await user.click(screen.getByRole('link', { name: 'NAS' }));
     expect(await screen.findByText('即将上线')).toBeInTheDocument();

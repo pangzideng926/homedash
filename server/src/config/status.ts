@@ -5,6 +5,7 @@ import {
   CONFIG_MODULE_LABELS,
   CONFIG_MODULE_NAMES,
   OPTIONAL_CONFIG_MODULES,
+  WINDOWS_SSH_REQUIRED_KEYS,
   type AppConfig,
   type ConfigKey,
   type ConfigModuleName,
@@ -71,10 +72,40 @@ function resolveAuthStatus(
   return anyAuthKeyFilled ? 'incomplete' : 'unconfigured';
 }
 
+function isEnvTruthy(value: string | undefined): boolean {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
 function resolveOptionalModuleStatus(
   moduleId: (typeof OPTIONAL_CONFIG_MODULES)[number],
   presence: Readonly<Record<ConfigKey, boolean>>,
+  source?: AppConfig | Record<string, string | undefined>,
 ): ConfigModuleStatusValue {
+  if (moduleId === 'vps') {
+    return presence.VPS_LIST_FILE ? 'configured' : 'unconfigured';
+  }
+
+  if (moduleId === 'windows') {
+    const isMockEnabled = isAppConfig(source)
+      ? Boolean(source.windows?.WIN_MOCK)
+      : isEnvTruthy((source ?? process.env).WIN_MOCK);
+
+    if (isMockEnabled) {
+      return 'configured';
+    }
+
+    const filledCount = WINDOWS_SSH_REQUIRED_KEYS.filter((key) => presence[key]).length;
+    if (filledCount === 0) {
+      return 'unconfigured';
+    }
+    if (filledCount === WINDOWS_SSH_REQUIRED_KEYS.length) {
+      return 'configured';
+    }
+    return 'incomplete';
+  }
+
   const keys = CONFIG_MODULE_KEYS[moduleId];
   const filledCount = keys.filter((key) => presence[key]).length;
   if (filledCount === 0) {
@@ -103,7 +134,7 @@ export function getConfigStatus(
   for (const moduleId of OPTIONAL_CONFIG_MODULES) {
     modules[moduleId] = buildModuleStatus(
       moduleId,
-      resolveOptionalModuleStatus(moduleId, presence),
+      resolveOptionalModuleStatus(moduleId, presence, source),
       presence,
     );
   }

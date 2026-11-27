@@ -7,9 +7,11 @@ import { z } from 'zod';
 import { verifyPassword } from './auth/password.js';
 import { getClientIp, InMemoryLoginRateLimiter, type LoginRateLimiter } from './auth/rate-limit.js';
 import { createSession, deleteSession, SESSION_COOKIE_NAME } from './auth/session.js';
-import { getConfigStatus, type AppConfig } from './config/index.js';
+import { getConfigStatus, type AppConfig, type SafeLogger } from './config/index.js';
 import type { AppDatabase } from './db/index.js';
 import { createAuthMiddleware, type AppVariables } from './middleware/auth.js';
+import { readVpsList, saveVpsList } from './vps/service.js';
+import { createWindowsStatusService, type WindowsCommandExecutor } from './windows/index.js';
 
 const loginBodySchema = z.object({
   username: z.string(),
@@ -73,6 +75,9 @@ export interface CreateAppOptions {
   rateLimiter?: LoginRateLimiter;
   getClientIp?: (c: Context) => string;
   now?: () => number;
+  windowsExecutor?: WindowsCommandExecutor;
+  readWindowsPrivateKey?: (keyPath: string) => Promise<string | Buffer>;
+  logger?: SafeLogger;
 }
 
 /**
@@ -94,6 +99,12 @@ export function createApp(
       lockMinutes: config.auth.LOGIN_LOCK_MINUTES,
       now: getNow,
     });
+  const windowsService = createWindowsStatusService(config, {
+    executor: options?.windowsExecutor,
+    readPrivateKey: options?.readWindowsPrivateKey,
+    now: getNow,
+    logger: options?.logger,
+  });
 
   app.use('/api/*', createAuthMiddleware(config, db, { now: getNow }));
 
@@ -173,6 +184,39 @@ export function createApp(
 
   app.get('/api/settings/status', (c) => {
     return c.json(getConfigStatus(config));
+  });
+
+  app.get('/api/vps', (c) => {
+    return c.json(readVpsList(config, getNow()));
+  });
+
+  app.put('/api/vps', async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: '请求体 JSON 格式错误' }, 400);
+    }
+
+    const result = saveVpsList(config, rawBody, getNow());
+    if (!result.ok) {
+      return c.json(
+        {
+          error: result.error,
+          ...(result.details ? { details: result.details } : {}),
+        },
+        result.status,
+      );
+    }
+
+    return c.json(result.data);
+  });
+
+  app.get('/api/windows/status', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    const result = await windowsService.getStatus({ refresh });
+    return c.json(result);
   });
 
   app.all('/api/*', (c) => {
