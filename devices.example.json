@@ -1,0 +1,37 @@
+{
+  "devices": [
+    {
+      "id": "demo-win-1",
+      "name": "客厅主机",
+      "host": "192.0.2.20",
+      "port": 22,
+      "user": "demo",
+      "keyPath": "./secrets/demo_win_ed25519",
+      "os": "windows",
+      "enabled": true,
+      "note": "示例 Windows 台式机"
+    },
+    {
+      "id": "demo-mac-1",
+      "name": "书房 Mac mini",
+      "host": "demo-mac.local",
+      "port": 22,
+      "user": "demo",
+      "keyPath": "./secrets/demo_mac_ed25519",
+      "os": "auto",
+      "enabled": true,
+      "note": "示例 macOS 主机（使用 .local 或路由器静态 DHCP IP）"
+    },
+    {
+      "id": "demo-linux-1",
+      "name": "实验室 Linux 节点",
+      "host": "192.0.2.30",
+      "port": 22,
+      "user": "demo",
+      "keyPath": "./secrets/demo_linux_ed25519",
+      "os": "linux",
+      "enabled": false,
+      "note": "示例 Linux 设备（默认禁用）"
+    }
+  ]
+}

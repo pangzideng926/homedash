@@ -1,15 +1,17 @@
 import { useCallback } from 'react';
 import { Link } from 'react-router';
 import { ArrowUpDown, Bell, HardDrive, Monitor, Server, type LucideIcon } from 'lucide-react';
-import { DataCard, PageHeader, type StatusVariant } from '@/components/common';
+import { DataCard, PageHeader, StatusBadge, type StatusVariant } from '@/components/common';
+import { DeviceOsIcon } from '@/components/devices/DeviceOsIcon';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '@/hooks/useApi';
 import {
+  fetchDevicesStatus,
   fetchVpsList,
-  fetchWindowsStatus,
+  type DevicesStatusResponse,
   type VpsLevel,
   type VpsListResponse,
   type VpsServerView,
-  type WindowsStatusResponse,
 } from '@/lib/api';
 
 interface OverviewPlaceholderItem {
@@ -58,62 +60,63 @@ function getNearestVpsServer(servers: readonly VpsServerView[]): VpsServerView |
   );
 }
 
-function buildPcCardProps(
-  data: WindowsStatusResponse | null,
+function buildDevicesSummaryBadge(
+  data: DevicesStatusResponse | null,
   loading: boolean,
   error: Error | null,
 ): {
-  value: string;
+  headline: string;
   status: StatusVariant;
   statusLabel: string;
-  footer: string;
+  message?: string;
 } {
   if (loading && !data) {
     return {
-      value: '加载中...',
+      headline: '加载中...',
       status: 'unknown',
       statusLabel: '采集中',
-      footer: '正在检查家用电脑状态',
+      message: '正在采集家用设备状态',
     };
   }
   if (error && !data) {
     return {
-      value: '状态异常',
+      headline: '状态异常',
       status: 'error',
       statusLabel: '请求失败',
-      footer: error.message,
+      message: error.message,
     };
   }
-  if (!data) {
+  if (!data || !data.configured || data.errorCode === 'UNCONFIGURED') {
     return {
-      value: '暂无数据',
-      status: 'unknown',
-      statusLabel: '未配置',
-      footer: '点击查看家用电脑详情',
-    };
-  }
-  if (data.errorCode === 'UNCONFIGURED') {
-    return {
-      value: '未配置',
+      headline: '未配置',
       status: 'unconfigured',
       statusLabel: '未配置',
-      footer: '点击查看配置说明',
+      message: '点击进入家用设备管理页',
     };
   }
-  if (!data.online || !data.data) {
+  if (data.error) {
     return {
-      value: '离线',
+      headline: '文件异常',
       status: 'error',
-      statusLabel: '离线',
-      footer: data.error ?? '主机离线或采集失败',
+      statusLabel: '异常',
+      message: data.error,
+    };
+  }
+  if (data.summary.total === 0) {
+    return {
+      headline: '0 / 0',
+      status: 'unknown',
+      statusLabel: '无启用设备',
+      message: '点击添加或启用设备',
     };
   }
 
+  const allOnline = data.summary.online === data.summary.total;
+  const noneOnline = data.summary.online === 0;
   return {
-    value: `CPU ${data.data.cpu.loadPercent}%`,
-    status: 'success',
-    statusLabel: '在线',
-    footer: `${data.data.hostname} · 内存 ${data.data.memory.usedPercent}%`,
+    headline: `${data.summary.online} / ${data.summary.total} 在线`,
+    status: allOnline ? 'success' : noneOnline ? 'error' : 'warning',
+    statusLabel: allOnline ? '全部在线' : noneOnline ? '全部离线' : '部分离线',
   };
 }
 
@@ -188,20 +191,24 @@ function buildVpsCardProps(
 }
 
 export function OverviewPage() {
-  const pcFetcher = useCallback((signal: AbortSignal) => fetchWindowsStatus({ signal }), []);
+  const devicesFetcher = useCallback((signal: AbortSignal) => fetchDevicesStatus({ signal }), []);
   const vpsFetcher = useCallback((signal: AbortSignal) => fetchVpsList(signal), []);
 
-  const pcState = useApi(pcFetcher);
+  const devicesState = useApi(devicesFetcher);
   const vpsState = useApi(vpsFetcher);
 
-  const pcCard = buildPcCardProps(pcState.data, pcState.loading, pcState.error);
+  const devicesSummary = buildDevicesSummaryBadge(
+    devicesState.data,
+    devicesState.loading,
+    devicesState.error,
+  );
   const vpsCard = buildVpsCardProps(vpsState.data, vpsState.loading, vpsState.error);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="总览"
-        description="集中查看家庭 NAS、做种服务、家用主机、VPS 到期与安全告警。"
+        description="集中查看家庭 NAS、做种服务、家用设备、VPS 到期与安全告警。"
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -222,19 +229,55 @@ export function OverviewPage() {
           statusLabel="待接入"
         />
         <Link
-          to="/pc"
+          to="/devices"
           className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <DataCard
-            title="家用电脑"
-            description="主机在线状态与硬件负载"
-            icon={Monitor}
-            value={pcCard.value}
-            status={pcCard.status}
-            statusLabel={pcCard.statusLabel}
-            footer={pcCard.footer}
-            className="h-full transition-colors hover:border-primary/40"
-          />
+          <Card className="flex h-full flex-col justify-between transition-colors hover:border-primary/40">
+            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+              <div className="min-w-0 space-y-1">
+                <CardTitle className="text-base">家用设备</CardTitle>
+                <CardDescription>多设备在线状态与硬件负载</CardDescription>
+              </div>
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                <Monitor className="size-4" aria-hidden="true" />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-2xl font-semibold tracking-tight text-foreground">
+                  {devicesSummary.headline}
+                </div>
+                <StatusBadge status={devicesSummary.status} label={devicesSummary.statusLabel} />
+              </div>
+
+              {devicesSummary.message ? (
+                <p className="text-xs text-muted-foreground">{devicesSummary.message}</p>
+              ) : devicesState.data && devicesState.data.devices.length > 0 ? (
+                <ul className="space-y-1.5 border-t border-border/60 pt-2">
+                  {devicesState.data.devices.map((device) => (
+                    <li key={device.id} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <DeviceOsIcon os={device.os} className="size-3.5 shrink-0" />
+                        <span className="truncate font-medium text-foreground">{device.name}</span>
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                        <StatusBadge
+                          status={device.online ? 'success' : 'error'}
+                          label={device.online ? '在线' : '离线'}
+                        />
+                        {device.online && device.data ? (
+                          <span>
+                            CPU {device.data.cpu.loadPercent}% · 内存{' '}
+                            {device.data.memory.usedPercent}%
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </CardContent>
+          </Card>
         </Link>
         <Link
           to="/vps"

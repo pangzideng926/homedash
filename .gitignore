@@ -174,4 +174,5 @@ id_ed25519*
 secrets/
 .secrets/
 vps.json
+devices.json
 
