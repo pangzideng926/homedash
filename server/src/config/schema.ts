@@ -197,6 +197,14 @@ const appEnvSchema = z.object({
   COOKIE_SECURE: z.preprocess(emptyToUndefined, booleanStringSchema.optional()),
   TRUST_PROXY: z.preprocess(emptyToUndefined, booleanStringSchema.default(false)),
   TZ_DISPLAY: z.preprocess(emptyToUndefined, timeZoneSchema.default('Asia/Shanghai')),
+  INTEGRATIONS_FILE: z.preprocess(
+    emptyToUndefined,
+    nonEmptyStringSchema('集成凭据文件路径').optional(),
+  ),
+  CONFIG_ENCRYPTION_KEY: z.preprocess(
+    emptyToUndefined,
+    z.string().min(32, '长度至少需要 32 个字符').optional(),
+  ),
 });
 
 const authEnvSchema = z.object({
@@ -219,23 +227,31 @@ const authEnvSchema = z.object({
   LOGIN_LOCK_MINUTES: z.preprocess(emptyToUndefined, positiveIntSchema('登录锁定时长').default(15)),
 });
 
-const nasEnvSchema = z.object({
+const nasFieldSchemas = {
   NAS_SSH_HOST: nonEmptyStringSchema('NAS SSH 主机'),
   NAS_SSH_PORT: portSchema,
   NAS_SSH_USER: nonEmptyStringSchema('NAS SSH 用户名'),
   NAS_SSH_KEY_PATH: nonEmptyStringSchema('NAS SSH 私钥路径'),
-});
+  NAS_MOCK: booleanStringSchema,
+  NAS_CACHE_SECONDS: nonNegativeIntSchema('NAS 状态缓存时间（秒）'),
+} as const;
 
-const qbittorrentEnvSchema = z.object({
+const qbittorrentFieldSchemas = {
   QBIT_URL: httpUrlSchema,
   QBIT_USERNAME: nonEmptyStringSchema('qBittorrent 用户名'),
   QBIT_PASSWORD: nonEmptyStringSchema('qBittorrent 密码'),
-});
+  QBIT_MOCK: booleanStringSchema,
+  QBIT_CACHE_SECONDS: nonNegativeIntSchema('qBittorrent 状态缓存时间（秒）'),
+  QBIT_TIMEOUT_MS: positiveIntSchema('qBittorrent 请求超时时间（毫秒）'),
+} as const;
 
-const moviepilotEnvSchema = z.object({
+const moviepilotFieldSchemas = {
   MOVIEPILOT_URL: httpUrlSchema,
   MOVIEPILOT_API_TOKEN: nonEmptyStringSchema('MoviePilot API 令牌'),
-});
+  MOVIEPILOT_MOCK: booleanStringSchema,
+  MOVIEPILOT_CACHE_SECONDS: nonNegativeIntSchema('MoviePilot 状态缓存时间（秒）'),
+  MOVIEPILOT_TIMEOUT_MS: positiveIntSchema('MoviePilot 请求超时时间（毫秒）'),
+} as const;
 
 const windowsSshEnvSchema = z.object({
   WIN_SSH_HOST: nonEmptyStringSchema('Windows SSH 主机'),
@@ -535,52 +551,218 @@ function collectZodIssues(
   }
 }
 
-function parseOptionalSection<TOutput>(
-  moduleName: ConfigModuleName,
-  keys: readonly string[],
-  schema: z.ZodObject<Record<string, z.ZodTypeAny>>,
+function parseNasSection(
   env: Record<string, string | undefined>,
   issues: ConfigIssue[],
-): TOutput | undefined {
-  const filledKeys = keys.filter((key) => isEnvValueFilled(env[key]));
-  if (filledKeys.length === 0) {
+): NasSectionConfig | undefined {
+  const anyFilled = CONFIG_MODULE_KEYS.nas.some((key) => isEnvValueFilled(env[key]));
+  if (!anyFilled) {
     return undefined;
   }
 
-  const missingKeys = keys.filter((key) => !isEnvValueFilled(env[key]));
-  if (missingKeys.length > 0) {
-    for (const key of missingKeys) {
-      issues.push({
-        module: moduleName,
-        key,
-        reason: '模块已部分配置，缺少该必填项',
-      });
-    }
+  const hostRes = parseSingleKey(
+    'nas',
+    'NAS_SSH_HOST',
+    nasFieldSchemas.NAS_SSH_HOST,
+    env.NAS_SSH_HOST,
+    undefined as string | undefined,
+    issues,
+  );
+  const portRes = parseSingleKey(
+    'nas',
+    'NAS_SSH_PORT',
+    nasFieldSchemas.NAS_SSH_PORT,
+    env.NAS_SSH_PORT,
+    undefined as number | undefined,
+    issues,
+  );
+  const userRes = parseSingleKey(
+    'nas',
+    'NAS_SSH_USER',
+    nasFieldSchemas.NAS_SSH_USER,
+    env.NAS_SSH_USER,
+    undefined as string | undefined,
+    issues,
+  );
+  const keyPathRes = parseSingleKey(
+    'nas',
+    'NAS_SSH_KEY_PATH',
+    nasFieldSchemas.NAS_SSH_KEY_PATH,
+    env.NAS_SSH_KEY_PATH,
+    undefined as string | undefined,
+    issues,
+  );
+  const mockRes = parseSingleKey(
+    'nas',
+    'NAS_MOCK',
+    nasFieldSchemas.NAS_MOCK,
+    env.NAS_MOCK,
+    false,
+    issues,
+  );
+  const cacheRes = parseSingleKey(
+    'nas',
+    'NAS_CACHE_SECONDS',
+    nasFieldSchemas.NAS_CACHE_SECONDS,
+    env.NAS_CACHE_SECONDS,
+    30,
+    issues,
+  );
 
-    for (const key of filledKeys) {
-      const fieldSchema = schema.shape[key];
-      if (!fieldSchema) continue;
-      const fieldResult = fieldSchema.safeParse(env[key]);
-      if (!fieldResult.success) {
-        const firstIssue = fieldResult.error.issues[0];
-        issues.push({
-          module: moduleName,
-          key,
-          reason: firstIssue?.message || '配置格式无效',
-        });
-      }
-    }
+  if (!hostRes.ok || !portRes.ok || !userRes.ok || !keyPathRes.ok || !mockRes.ok || !cacheRes.ok) {
     return undefined;
   }
 
-  const input = pickSectionInput(env, keys);
-  const result = schema.safeParse(input);
-  if (!result.success) {
-    collectZodIssues(moduleName, result.error.issues, issues);
+  return {
+    ...(hostRes.value !== undefined ? { NAS_SSH_HOST: hostRes.value } : {}),
+    ...(portRes.value !== undefined ? { NAS_SSH_PORT: portRes.value } : {}),
+    ...(userRes.value !== undefined ? { NAS_SSH_USER: userRes.value } : {}),
+    ...(keyPathRes.value !== undefined ? { NAS_SSH_KEY_PATH: keyPathRes.value } : {}),
+    NAS_MOCK: mockRes.value,
+    NAS_CACHE_SECONDS: cacheRes.value,
+  };
+}
+
+function parseQbittorrentSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): QbittorrentSectionConfig | undefined {
+  const anyFilled = CONFIG_MODULE_KEYS.qbittorrent.some((key) => isEnvValueFilled(env[key]));
+  if (!anyFilled) {
     return undefined;
   }
 
-  return result.data as TOutput;
+  const urlRes = parseSingleKey(
+    'qbittorrent',
+    'QBIT_URL',
+    qbittorrentFieldSchemas.QBIT_URL,
+    env.QBIT_URL,
+    undefined as string | undefined,
+    issues,
+  );
+  const usernameRes = parseSingleKey(
+    'qbittorrent',
+    'QBIT_USERNAME',
+    qbittorrentFieldSchemas.QBIT_USERNAME,
+    env.QBIT_USERNAME,
+    undefined as string | undefined,
+    issues,
+  );
+  const passwordRes = parseSingleKey(
+    'qbittorrent',
+    'QBIT_PASSWORD',
+    qbittorrentFieldSchemas.QBIT_PASSWORD,
+    env.QBIT_PASSWORD,
+    undefined as string | undefined,
+    issues,
+  );
+  const mockRes = parseSingleKey(
+    'qbittorrent',
+    'QBIT_MOCK',
+    qbittorrentFieldSchemas.QBIT_MOCK,
+    env.QBIT_MOCK,
+    false,
+    issues,
+  );
+  const cacheRes = parseSingleKey(
+    'qbittorrent',
+    'QBIT_CACHE_SECONDS',
+    qbittorrentFieldSchemas.QBIT_CACHE_SECONDS,
+    env.QBIT_CACHE_SECONDS,
+    10,
+    issues,
+  );
+  const timeoutRes = parseSingleKey(
+    'qbittorrent',
+    'QBIT_TIMEOUT_MS',
+    qbittorrentFieldSchemas.QBIT_TIMEOUT_MS,
+    env.QBIT_TIMEOUT_MS,
+    8000,
+    issues,
+  );
+
+  if (
+    !urlRes.ok ||
+    !usernameRes.ok ||
+    !passwordRes.ok ||
+    !mockRes.ok ||
+    !cacheRes.ok ||
+    !timeoutRes.ok
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(urlRes.value !== undefined ? { QBIT_URL: urlRes.value } : {}),
+    ...(usernameRes.value !== undefined ? { QBIT_USERNAME: usernameRes.value } : {}),
+    ...(passwordRes.value !== undefined ? { QBIT_PASSWORD: passwordRes.value } : {}),
+    QBIT_MOCK: mockRes.value,
+    QBIT_CACHE_SECONDS: cacheRes.value,
+    QBIT_TIMEOUT_MS: timeoutRes.value,
+  };
+}
+
+function parseMoviepilotSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): MoviepilotSectionConfig | undefined {
+  const anyFilled = CONFIG_MODULE_KEYS.moviepilot.some((key) => isEnvValueFilled(env[key]));
+  if (!anyFilled) {
+    return undefined;
+  }
+
+  const urlRes = parseSingleKey(
+    'moviepilot',
+    'MOVIEPILOT_URL',
+    moviepilotFieldSchemas.MOVIEPILOT_URL,
+    env.MOVIEPILOT_URL,
+    undefined as string | undefined,
+    issues,
+  );
+  const tokenRes = parseSingleKey(
+    'moviepilot',
+    'MOVIEPILOT_API_TOKEN',
+    moviepilotFieldSchemas.MOVIEPILOT_API_TOKEN,
+    env.MOVIEPILOT_API_TOKEN,
+    undefined as string | undefined,
+    issues,
+  );
+  const mockRes = parseSingleKey(
+    'moviepilot',
+    'MOVIEPILOT_MOCK',
+    moviepilotFieldSchemas.MOVIEPILOT_MOCK,
+    env.MOVIEPILOT_MOCK,
+    false,
+    issues,
+  );
+  const cacheRes = parseSingleKey(
+    'moviepilot',
+    'MOVIEPILOT_CACHE_SECONDS',
+    moviepilotFieldSchemas.MOVIEPILOT_CACHE_SECONDS,
+    env.MOVIEPILOT_CACHE_SECONDS,
+    60,
+    issues,
+  );
+  const timeoutRes = parseSingleKey(
+    'moviepilot',
+    'MOVIEPILOT_TIMEOUT_MS',
+    moviepilotFieldSchemas.MOVIEPILOT_TIMEOUT_MS,
+    env.MOVIEPILOT_TIMEOUT_MS,
+    8000,
+    issues,
+  );
+
+  if (!urlRes.ok || !tokenRes.ok || !mockRes.ok || !cacheRes.ok || !timeoutRes.ok) {
+    return undefined;
+  }
+
+  return {
+    ...(urlRes.value !== undefined ? { MOVIEPILOT_URL: urlRes.value } : {}),
+    ...(tokenRes.value !== undefined ? { MOVIEPILOT_API_TOKEN: tokenRes.value } : {}),
+    MOVIEPILOT_MOCK: mockRes.value,
+    MOVIEPILOT_CACHE_SECONDS: cacheRes.value,
+    MOVIEPILOT_TIMEOUT_MS: timeoutRes.value,
+  };
 }
 
 function buildKeyPresence(env: Record<string, string | undefined>): Record<ConfigKey, boolean> {
@@ -607,27 +789,9 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     collectZodIssues('auth', authResult.error.issues, issues);
   }
 
-  const nas = parseOptionalSection<NasSectionConfig>(
-    'nas',
-    CONFIG_MODULE_KEYS.nas,
-    nasEnvSchema,
-    env,
-    issues,
-  );
-  const qbittorrent = parseOptionalSection<QbittorrentSectionConfig>(
-    'qbittorrent',
-    CONFIG_MODULE_KEYS.qbittorrent,
-    qbittorrentEnvSchema,
-    env,
-    issues,
-  );
-  const moviepilot = parseOptionalSection<MoviepilotSectionConfig>(
-    'moviepilot',
-    CONFIG_MODULE_KEYS.moviepilot,
-    moviepilotEnvSchema,
-    env,
-    issues,
-  );
+  const nas = parseNasSection(env, issues);
+  const qbittorrent = parseQbittorrentSection(env, issues);
+  const moviepilot = parseMoviepilotSection(env, issues);
   const devices = parseDevicesSection(env, issues);
   const windows = parseWindowsSection(env, issues);
   const vps = parseVpsSection(env, issues);
@@ -650,6 +814,10 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     COOKIE_SECURE: parsedApp.COOKIE_SECURE ?? parsedApp.NODE_ENV === 'production',
     TRUST_PROXY: parsedApp.TRUST_PROXY,
     TZ_DISPLAY: parsedApp.TZ_DISPLAY,
+    ...(parsedApp.INTEGRATIONS_FILE ? { INTEGRATIONS_FILE: parsedApp.INTEGRATIONS_FILE } : {}),
+    ...(parsedApp.CONFIG_ENCRYPTION_KEY
+      ? { CONFIG_ENCRYPTION_KEY: parsedApp.CONFIG_ENCRYPTION_KEY }
+      : {}),
   };
 
   const authSection: AuthSectionConfig = {

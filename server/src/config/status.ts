@@ -4,7 +4,10 @@ import {
   CONFIG_MODULE_KEYS,
   CONFIG_MODULE_LABELS,
   CONFIG_MODULE_NAMES,
+  MOVIEPILOT_REQUIRED_KEYS,
+  NAS_REQUIRED_KEYS,
   OPTIONAL_CONFIG_MODULES,
+  QBIT_REQUIRED_KEYS,
   WINDOWS_SSH_REQUIRED_KEYS,
   type AppConfig,
   type ConfigKey,
@@ -28,15 +31,19 @@ function isAppConfig(source: unknown): source is AppConfig {
 
 function resolveKeyPresence(
   source?: AppConfig | Record<string, string | undefined>,
+  extraKeyPresence?: Partial<Record<ConfigKey, boolean>>,
 ): Record<ConfigKey, boolean> {
+  const presence = {} as Record<ConfigKey, boolean>;
   if (isAppConfig(source)) {
-    return { ...source.keyPresence };
+    for (const key of ALL_CONFIG_KEYS) {
+      presence[key] = Boolean(source.keyPresence[key] || extraKeyPresence?.[key]);
+    }
+    return presence;
   }
 
   const rawEnv = source ?? process.env;
-  const presence = {} as Record<ConfigKey, boolean>;
   for (const key of ALL_CONFIG_KEYS) {
-    presence[key] = isEnvValueFilled(rawEnv[key]);
+    presence[key] = Boolean(isEnvValueFilled(rawEnv[key]) || extraKeyPresence?.[key]);
   }
   return presence;
 }
@@ -78,6 +85,20 @@ function isEnvTruthy(value: string | undefined): boolean {
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
 }
 
+function resolveRequiredKeysOrMockStatus(
+  isMockEnabled: boolean,
+  requiredKeys: readonly ConfigKey[],
+  presence: Readonly<Record<ConfigKey, boolean>>,
+): ConfigModuleStatusValue {
+  if (isMockEnabled) {
+    return 'configured';
+  }
+  const filledCount = requiredKeys.filter((key) => presence[key]).length;
+  if (filledCount === 0) return 'unconfigured';
+  if (filledCount === requiredKeys.length) return 'configured';
+  return 'incomplete';
+}
+
 function resolveOptionalModuleStatus(
   moduleId: (typeof OPTIONAL_CONFIG_MODULES)[number],
   presence: Readonly<Record<ConfigKey, boolean>>,
@@ -99,30 +120,27 @@ function resolveOptionalModuleStatus(
     const isMockEnabled = isAppConfig(source)
       ? Boolean(source.windows?.WIN_MOCK)
       : isEnvTruthy((source ?? process.env).WIN_MOCK);
-
-    if (isMockEnabled) {
-      return 'configured';
-    }
-
-    const filledCount = WINDOWS_SSH_REQUIRED_KEYS.filter((key) => presence[key]).length;
-    if (filledCount === 0) {
-      return 'unconfigured';
-    }
-    if (filledCount === WINDOWS_SSH_REQUIRED_KEYS.length) {
-      return 'configured';
-    }
-    return 'incomplete';
+    return resolveRequiredKeysOrMockStatus(isMockEnabled, WINDOWS_SSH_REQUIRED_KEYS, presence);
   }
 
-  const keys = CONFIG_MODULE_KEYS[moduleId];
-  const filledCount = keys.filter((key) => presence[key]).length;
-  if (filledCount === 0) {
-    return 'unconfigured';
+  if (moduleId === 'nas') {
+    const isMockEnabled = isAppConfig(source)
+      ? Boolean(source.nas?.NAS_MOCK)
+      : isEnvTruthy((source ?? process.env).NAS_MOCK);
+    return resolveRequiredKeysOrMockStatus(isMockEnabled, NAS_REQUIRED_KEYS, presence);
   }
-  if (filledCount === keys.length) {
-    return 'configured';
+
+  if (moduleId === 'qbittorrent') {
+    const isMockEnabled = isAppConfig(source)
+      ? Boolean(source.qbittorrent?.QBIT_MOCK)
+      : isEnvTruthy((source ?? process.env).QBIT_MOCK);
+    return resolveRequiredKeysOrMockStatus(isMockEnabled, QBIT_REQUIRED_KEYS, presence);
   }
-  return 'incomplete';
+
+  const isMockEnabled = isAppConfig(source)
+    ? Boolean(source.moviepilot?.MOVIEPILOT_MOCK)
+    : isEnvTruthy((source ?? process.env).MOVIEPILOT_MOCK);
+  return resolveRequiredKeysOrMockStatus(isMockEnabled, MOVIEPILOT_REQUIRED_KEYS, presence);
 }
 
 /**
@@ -130,8 +148,9 @@ function resolveOptionalModuleStatus(
  */
 export function getConfigStatus(
   source?: AppConfig | Record<string, string | undefined>,
+  extraKeyPresence?: Partial<Record<ConfigKey, boolean>>,
 ): ConfigStatusReport {
-  const presence = resolveKeyPresence(source);
+  const presence = resolveKeyPresence(source, extraKeyPresence);
 
   const modules = {} as Record<ConfigModuleName, ConfigModuleStatus>;
 

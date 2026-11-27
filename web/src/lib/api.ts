@@ -559,3 +559,362 @@ export async function testDeviceConnection(payload: DeviceTestInput): Promise<De
     fallbackErrorMessage: '连接测试失败，请稍后重试',
   });
 }
+
+// ==================== 集成凭据配置 ====================
+
+export type IntegrationModuleName = 'nas' | 'qbittorrent' | 'moviepilot';
+export type IntegrationFieldSource = 'env' | 'file' | 'unset';
+
+export interface PublicIntegrationField<T = string | number> {
+  source: IntegrationFieldSource;
+  set: boolean;
+  value?: T;
+}
+
+export interface PublicSecretIntegrationField {
+  source: IntegrationFieldSource;
+  set: boolean;
+}
+
+export interface IntegrationsViewResponse {
+  fileConfigured: boolean;
+  modules: {
+    nas: {
+      configured: boolean;
+      mock: boolean;
+      fields: {
+        host: PublicIntegrationField<string>;
+        port: PublicIntegrationField<number>;
+        user: PublicIntegrationField<string>;
+        keyPath: PublicIntegrationField<string>;
+      };
+    };
+    qbittorrent: {
+      configured: boolean;
+      mock: boolean;
+      fields: {
+        url: PublicIntegrationField<string>;
+        username: PublicIntegrationField<string>;
+        password: PublicSecretIntegrationField;
+      };
+    };
+    moviepilot: {
+      configured: boolean;
+      mock: boolean;
+      fields: {
+        url: PublicIntegrationField<string>;
+        apiToken: PublicSecretIntegrationField;
+      };
+    };
+  };
+  error?: string;
+}
+
+export interface IntegrationTestResponse {
+  ok: boolean;
+  durationMs: number;
+  detail?: string;
+  error?: string;
+}
+
+export async function fetchIntegrations(signal?: AbortSignal): Promise<IntegrationsViewResponse> {
+  return apiRequest<IntegrationsViewResponse>('/api/integrations', {
+    method: 'GET',
+    ...(signal ? { signal } : {}),
+    fallbackErrorMessage: '获取集成配置失败，请稍后重试',
+  });
+}
+
+export async function saveIntegrationModule(
+  moduleName: IntegrationModuleName,
+  payload: Record<string, unknown>,
+): Promise<IntegrationsViewResponse> {
+  return apiRequest<IntegrationsViewResponse>(`/api/integrations/${moduleName}`, {
+    method: 'PUT',
+    body: payload,
+    fallbackErrorMessage: '保存集成配置失败，请稍后重试',
+  });
+}
+
+export async function testIntegrationModule(
+  moduleName: IntegrationModuleName,
+  payload: Record<string, unknown>,
+): Promise<IntegrationTestResponse> {
+  return apiRequest<IntegrationTestResponse>(`/api/integrations/${moduleName}/test`, {
+    method: 'POST',
+    body: payload,
+    fallbackErrorMessage: '连接测试失败，请稍后重试',
+  });
+}
+
+// ==================== NAS 状态 ====================
+
+export type NasTemperatureCategory = 'cpu' | 'nvme' | 'memory' | 'motherboard' | 'disk' | 'other';
+
+export interface NasTemperatureGroup {
+  category: NasTemperatureCategory;
+  label: string;
+  maxTempC: number;
+  sensors: Array<{ name: string; tempC: number }>;
+}
+
+export interface NasSmartDiskTemp {
+  device: string;
+  model?: string;
+  tempC: number;
+}
+
+export interface NasSmartInfo {
+  available: boolean;
+  reason?: string;
+  disks: NasSmartDiskTemp[];
+}
+
+export interface NasRaidArray {
+  name: string;
+  status: string;
+  level: string;
+  members: string[];
+  stateFlags: string;
+  activeDevices: number;
+  totalDevices: number;
+  healthy: boolean;
+  statusLabel: '正常' | '降级';
+}
+
+export interface NasVolumeInfo {
+  mount: string;
+  device: string;
+  fsType: string;
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usedPercent: number;
+  isVolume: boolean;
+}
+
+export interface NasDockerContainer {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  runningFor: string;
+  ports: string;
+}
+
+export interface NasDockerInfo {
+  available: boolean;
+  reason?: string;
+  containers: NasDockerContainer[];
+}
+
+export interface NasStatusData {
+  hostname: string;
+  osVersion: string;
+  uptimeSeconds: number;
+  bootTime: string;
+  loadAvg: [number, number, number];
+  cpu: {
+    model: string;
+    cores: number;
+    loadPercent: number;
+  };
+  memory: {
+    totalBytes: number;
+    usedBytes: number;
+    availableBytes: number;
+    usedPercent: number;
+  };
+  temperatures: NasTemperatureGroup[];
+  maxTemperatureC: number | null;
+  smart: NasSmartInfo;
+  raids: NasRaidArray[];
+  volumes: NasVolumeInfo[];
+  docker: NasDockerInfo;
+}
+
+export interface NasStatusResponse {
+  configured: boolean;
+  mock: boolean;
+  online: boolean;
+  checkedAt: string;
+  cached: boolean;
+  errorCode?: string;
+  error?: string;
+  data?: NasStatusData;
+}
+
+export async function fetchNasStatus(options?: {
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<NasStatusResponse> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<NasStatusResponse>(`/api/nas/status${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取 NAS 状态失败，请稍后重试',
+  });
+}
+
+// ==================== qBittorrent 摘要 ====================
+
+export interface QbitStateCounts {
+  seeding: number;
+  downloading: number;
+  paused: number;
+  error: number;
+  stalled: number;
+  other: number;
+  total: number;
+}
+
+export interface QbitGroupStat {
+  name: string;
+  seedingCount: number;
+  totalCount: number;
+  totalSizeBytes: number;
+}
+
+export interface QbitProblemTorrent {
+  hash: string;
+  name: string;
+  state: string;
+  reason: string;
+  sizeBytes: number;
+  trackerDomain: string;
+  category: string;
+  progress: number;
+}
+
+export interface QbitSummaryData {
+  version: string;
+  transfer: {
+    upSpeed: number;
+    dlSpeed: number;
+    alltimeUploadBytes: number;
+    alltimeDownloadBytes: number;
+    globalRatio: number;
+    totalsApproximate: boolean;
+  };
+  counts: QbitStateCounts;
+  byTracker: QbitGroupStat[];
+  byCategory: QbitGroupStat[];
+  problemTorrents: QbitProblemTorrent[];
+  problemTorrentsTotal: number;
+}
+
+export interface QbitSummaryResponse {
+  configured: boolean;
+  mock: boolean;
+  online: boolean;
+  checkedAt: string;
+  cached: boolean;
+  errorCode?: string;
+  error?: string;
+  data?: QbitSummaryData;
+}
+
+export async function fetchQbitSummary(options?: {
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<QbitSummaryResponse> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<QbitSummaryResponse>(`/api/qbittorrent/summary${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取 qBittorrent 摘要失败，请稍后重试',
+  });
+}
+
+// ==================== MoviePilot 摘要 ====================
+
+export interface MoviepilotSubscribeItem {
+  id: number | string;
+  name: string;
+  year: string;
+  type: string;
+  season: number | null;
+  state: string;
+  totalEpisode: number | null;
+  lackEpisode: number | null;
+  lastUpdate: string;
+}
+
+export interface MoviepilotTransferItem {
+  title: string;
+  year: string;
+  type: string;
+  seasons: string;
+  episodes: string;
+  status: boolean;
+  errmsg: string;
+  date: string;
+  category: string;
+}
+
+export interface MoviepilotDownloadItem {
+  title: string;
+  name: string;
+  siteName: string;
+  size: number;
+  progress: number;
+  state: string;
+  dlSpeed: number;
+  upSpeed: number;
+  leftTime: string;
+  downloader: string;
+}
+
+export interface MoviepilotSiteStatus {
+  id: number | string;
+  name: string;
+  domain: string;
+  isActive: boolean;
+  priority: number | null;
+  successCount: number;
+  failCount: number;
+  avgSeconds: number | null;
+  lastState: 'success' | 'fail' | 'unknown';
+  lastModDate: string;
+}
+
+export interface MoviepilotDownloaderStats {
+  downloadSpeed: number;
+  uploadSpeed: number;
+  downloadSize: number;
+  uploadSize: number;
+  freeSpace: number;
+}
+
+export interface MoviepilotSummaryData {
+  subscribes: MoviepilotSubscribeItem[];
+  transfers: MoviepilotTransferItem[];
+  transferTotal: number;
+  downloads: MoviepilotDownloadItem[];
+  sites: MoviepilotSiteStatus[];
+  downloader: MoviepilotDownloaderStats | null;
+}
+
+export interface MoviepilotSummaryResponse {
+  configured: boolean;
+  mock: boolean;
+  online: boolean;
+  checkedAt: string;
+  cached: boolean;
+  errorCode?: string;
+  error?: string;
+  data?: MoviepilotSummaryData;
+}
+
+export async function fetchMoviepilotSummary(options?: {
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<MoviepilotSummaryResponse> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<MoviepilotSummaryResponse>(`/api/moviepilot/summary${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取 MoviePilot 摘要失败，请稍后重试',
+  });
+}
