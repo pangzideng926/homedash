@@ -30,6 +30,7 @@ export function collectSecretValues(config: AppConfig): string[] {
   const candidates = [
     config.auth.ADMIN_PASSWORD_HASH,
     config.auth.SESSION_SECRET,
+    config.app.CONFIG_ENCRYPTION_KEY,
     config.nas?.NAS_SSH_KEY_PATH,
     config.qbittorrent?.QBIT_PASSWORD,
     config.moviepilot?.MOVIEPILOT_API_TOKEN,

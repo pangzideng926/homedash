@@ -82,22 +82,28 @@ describe('SettingsPage 设置状态页', () => {
 
   it('请求失败时展示中文错误提示并支持点击重试', async () => {
     const user = userEvent.setup();
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ error: '服务暂时不可用' }, 503))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          modules: {
-            app: {
-              id: 'app',
-              label: '应用基础',
-              status: 'configured',
-              statusLabel: '已配置',
-              keys: { PORT: true },
-            },
+    let statusAttempt = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/integrations')) {
+        return jsonResponse({ modules: {} });
+      }
+      statusAttempt += 1;
+      if (statusAttempt === 1) {
+        return jsonResponse({ error: '服务暂时不可用' }, 503);
+      }
+      return jsonResponse({
+        modules: {
+          app: {
+            id: 'app',
+            label: '应用基础',
+            status: 'configured',
+            statusLabel: '已配置',
+            keys: { PORT: true },
           },
-        }),
-      );
+        },
+      });
+    });
 
     render(<SettingsPage />);
 
@@ -106,6 +112,117 @@ describe('SettingsPage 设置状态页', () => {
     await user.click(screen.getByRole('button', { name: '重试' }));
 
     expect(await screen.findByText('应用基础')).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(statusAttempt).toBe(2);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it('集成配置区展示已设置状态、清除按钮、.env 只读与测试连接/保存交互', async () => {
+    const user = userEvent.setup();
+    const putBodies: Array<{ url: string; body: unknown }> = [];
+    const testBodies: Array<{ url: string; body: unknown }> = [];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const method = (init?.method ?? 'GET').toUpperCase();
+
+      if (url.endsWith('/api/settings/status')) {
+        return jsonResponse({
+          modules: {
+            nas: {
+              id: 'nas',
+              label: 'NAS',
+              status: 'configured',
+              statusLabel: '已配置',
+              keys: { NAS_SSH_HOST: true },
+            },
+          },
+        });
+      }
+
+      if (url.endsWith('/api/integrations') && method === 'GET') {
+        return jsonResponse({
+          fileConfigured: true,
+          modules: {
+            nas: {
+              configured: true,
+              mock: false,
+              fields: {
+                host: { source: 'env', set: true, value: '192.0.2.10' },
+                port: { source: 'file', set: true, value: 22 },
+                user: { source: 'file', set: true, value: 'demo' },
+                keyPath: { source: 'file', set: true, value: './secrets/nas_key' },
+              },
+            },
+            qbittorrent: {
+              configured: true,
+              mock: false,
+              fields: {
+                url: { source: 'file', set: true, value: 'http://192.0.2.10:8080' },
+                username: { source: 'file', set: true, value: 'demo' },
+                password: { source: 'file', set: true },
+              },
+            },
+            moviepilot: {
+              configured: false,
+              mock: false,
+              fields: {
+                url: { source: 'unset', set: false },
+                apiToken: { source: 'unset', set: false },
+              },
+            },
+          },
+        });
+      }
+
+      if (url.endsWith('/api/integrations/qbittorrent') && method === 'PUT') {
+        putBodies.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
+        return jsonResponse({ fileConfigured: true, modules: {} });
+      }
+
+      if (url.endsWith('/api/integrations/moviepilot/test') && method === 'POST') {
+        testBodies.push({ url, body: JSON.parse(String(init?.body ?? '{}')) });
+        return jsonResponse({ ok: true, durationMs: 42, detail: 'MoviePilot API 连接成功' });
+      }
+
+      return jsonResponse({ error: '未预期请求' }, 404);
+    });
+
+    render(<SettingsPage />);
+
+    expect(await screen.findByText('集成配置')).toBeInTheDocument();
+    // NAS host 由 .env 管理，只读且带徽章
+    const nasHostInput = screen.getByLabelText('主机地址') as HTMLInputElement;
+    expect(nasHostInput).toBeDisabled();
+    expect(nasHostInput.value).toBe('192.0.2.10');
+    expect(screen.getByText('由 .env 管理')).toBeInTheDocument();
+
+    // qBittorrent 密码只显示 placeholder "已设置（留空则不修改）"，不回显任何值
+    const qbitPassInput = screen.getByLabelText('密码') as HTMLInputElement;
+    expect(qbitPassInput.value).toBe('');
+    expect(qbitPassInput.placeholder).toBe('已设置（留空则不修改）');
+
+    // MoviePilot 令牌未设置
+    const mpTokenInput = screen.getByLabelText('API 令牌') as HTMLInputElement;
+    expect(mpTokenInput.placeholder).toBe('未设置');
+
+    // 点击清除 qBittorrent 密码并保存，应发送 password: null
+    await user.click(screen.getByRole('button', { name: '清除 qBittorrent 密码' }));
+    expect(qbitPassInput.placeholder).toBe('已标记清除，保存后生效');
+
+    const saveButtons = screen.getAllByRole('button', { name: '保存' });
+    await user.click(saveButtons[1]!);
+    expect(putBodies[0]?.body).toMatchObject({ password: null });
+
+    // 测试连接 MoviePilot
+    await user.type(screen.getByLabelText('服务地址'), 'https://mp.example.com');
+    await user.type(mpTokenInput, 'fake-temp-token');
+    const testButtons = screen.getAllByRole('button', { name: '测试连接' });
+    await user.click(testButtons[2]!);
+
+    expect(await screen.findByText(/MoviePilot API 连接成功/)).toBeInTheDocument();
+    expect(testBodies[0]?.body).toEqual({
+      url: 'https://mp.example.com',
+      apiToken: 'fake-temp-token',
+    });
   });
 });

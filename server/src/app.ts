@@ -11,6 +11,15 @@ import { getConfigStatus, type AppConfig, type SafeLogger } from './config/index
 import type { AppDatabase } from './db/index.js';
 import { createAuthMiddleware, type AppVariables } from './middleware/auth.js';
 import { createDevicesService, type SshCommandExecutor } from './devices/index.js';
+import {
+  createIntegrationsStore,
+  type MoviepilotTestOverride,
+  type NasTestOverride,
+  type QbittorrentTestOverride,
+} from './integrations/index.js';
+import { createMoviepilotService } from './moviepilot/index.js';
+import { createNasService } from './nas/index.js';
+import { createQbittorrentService } from './qbittorrent/index.js';
 import { readVpsList, saveVpsList } from './vps/service.js';
 import type { WindowsCommandExecutor } from './windows/index.js';
 
@@ -80,6 +89,7 @@ export interface CreateAppOptions {
   readPrivateKey?: (keyPath: string) => Promise<string | Buffer>;
   windowsExecutor?: WindowsCommandExecutor;
   readWindowsPrivateKey?: (keyPath: string) => Promise<string | Buffer>;
+  fetchFn?: typeof fetch;
   logger?: SafeLogger;
 }
 
@@ -105,6 +115,25 @@ export function createApp(
   const devicesService = createDevicesService(config, {
     executor: options?.sshExecutor ?? options?.windowsExecutor,
     readPrivateKey: options?.readPrivateKey ?? options?.readWindowsPrivateKey,
+    now: getNow,
+    logger: options?.logger,
+  });
+  const integrationsStore = createIntegrationsStore(config, {
+    logger: options?.logger,
+  });
+  const nasService = createNasService(config, integrationsStore, {
+    executor: options?.sshExecutor ?? options?.windowsExecutor,
+    readPrivateKey: options?.readPrivateKey ?? options?.readWindowsPrivateKey,
+    now: getNow,
+    logger: options?.logger,
+  });
+  const qbittorrentService = createQbittorrentService(integrationsStore, {
+    fetchFn: options?.fetchFn,
+    now: getNow,
+    logger: options?.logger,
+  });
+  const moviepilotService = createMoviepilotService(integrationsStore, {
+    fetchFn: options?.fetchFn,
     now: getNow,
     logger: options?.logger,
   });
@@ -186,7 +215,84 @@ export function createApp(
   });
 
   app.get('/api/settings/status', (c) => {
-    return c.json(getConfigStatus(config));
+    return c.json(getConfigStatus(config, integrationsStore.getMergedKeyPresence()));
+  });
+
+  app.get('/api/integrations', (c) => {
+    return c.json(integrationsStore.getView());
+  });
+
+  app.put('/api/integrations/:module', async (c) => {
+    const moduleName = c.req.param('module');
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: '请求体 JSON 格式错误' }, 400);
+    }
+
+    const result = integrationsStore.saveModule(moduleName, rawBody);
+    if (!result.ok) {
+      return c.json(
+        {
+          error: result.error,
+          ...(result.details ? { details: result.details } : {}),
+        },
+        result.status,
+      );
+    }
+
+    if (moduleName === 'nas') nasService.invalidateCache();
+    if (moduleName === 'qbittorrent') qbittorrentService.invalidateCache();
+    if (moduleName === 'moviepilot') moviepilotService.invalidateCache();
+
+    return c.json(result.data);
+  });
+
+  app.post('/api/integrations/:module/test', async (c) => {
+    const moduleName = c.req.param('module');
+    if (moduleName !== 'nas' && moduleName !== 'qbittorrent' && moduleName !== 'moviepilot') {
+      return c.json({ error: '不支持的集成模块名称' }, 400);
+    }
+
+    let rawBody: unknown = {};
+    const text = await c.req.text();
+    if (text.trim()) {
+      try {
+        rawBody = JSON.parse(text);
+      } catch {
+        return c.json({ error: '请求体 JSON 格式错误' }, 400);
+      }
+      if (typeof rawBody !== 'object' || rawBody === null || Array.isArray(rawBody)) {
+        return c.json({ error: '请求体必须为 JSON 对象' }, 400);
+      }
+    }
+
+    if (moduleName === 'nas') {
+      return c.json(await nasService.testConnection(rawBody as NasTestOverride));
+    }
+    if (moduleName === 'qbittorrent') {
+      return c.json(await qbittorrentService.testConnection(rawBody as QbittorrentTestOverride));
+    }
+    return c.json(await moviepilotService.testConnection(rawBody as MoviepilotTestOverride));
+  });
+
+  app.get('/api/nas/status', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await nasService.getStatus({ refresh }));
+  });
+
+  app.get('/api/qbittorrent/summary', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await qbittorrentService.getSummary({ refresh }));
+  });
+
+  app.get('/api/moviepilot/summary', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await moviepilotService.getSummary({ refresh }));
   });
 
   app.get('/api/vps', (c) => {

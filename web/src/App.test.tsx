@@ -249,6 +249,33 @@ describe('homedash 前端认证与控制台', () => {
         loggedIn = false;
         return jsonResponse({ ok: true });
       }
+      if (url.startsWith('/api/nas/status')) {
+        return jsonResponse({
+          configured: false,
+          mock: false,
+          online: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+        });
+      }
+      if (url.startsWith('/api/qbittorrent/summary')) {
+        return jsonResponse({
+          configured: false,
+          mock: false,
+          online: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+        });
+      }
+      if (url.startsWith('/api/moviepilot/summary')) {
+        return jsonResponse({
+          configured: false,
+          mock: false,
+          online: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+        });
+      }
       if (url.endsWith('/api/vps')) {
         return jsonResponse({
           configured: true,
@@ -326,7 +353,8 @@ describe('homedash 前端认证与控制台', () => {
     expect(await screen.findByRole('heading', { name: '总览' })).toBeInTheDocument();
     expect(screen.getByText('admin')).toBeInTheDocument();
     expect(screen.getByText('NAS 状态')).toBeInTheDocument();
-    expect(screen.getByText('做种概况')).toBeInTheDocument();
+    expect(screen.getByText('下载与做种', { selector: 'h3' })).toBeInTheDocument();
+    expect(screen.getByText('影视订阅')).toBeInTheDocument();
     expect(screen.getByText('家用设备', { selector: 'h3' })).toBeInTheDocument();
     expect(screen.getByText('VPS 到期')).toBeInTheDocument();
     expect(screen.getByText('最近告警')).toBeInTheDocument();
@@ -336,10 +364,10 @@ describe('homedash 前端认证与控制台', () => {
     expect(screen.getByText(/CPU 25% · 内存 50%/)).toBeInTheDocument();
     expect(await screen.findByText('2 台')).toBeInTheDocument();
     expect(screen.getByText(/最近到期：香港节点/)).toBeInTheDocument();
-    expect(screen.getAllByText('暂无数据')).toHaveLength(3);
+    expect(screen.getAllByText('未配置，去设置')).toHaveLength(3);
 
     await user.click(screen.getByRole('link', { name: 'NAS' }));
-    expect(await screen.findByText('即将上线')).toBeInTheDocument();
+    expect(await screen.findByText('尚未配置 NAS')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '退出登录' }));
     await waitFor(() => {

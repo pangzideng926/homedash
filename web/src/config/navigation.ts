@@ -2,6 +2,7 @@ import { lazy } from 'react';
 import {
   ArrowUpDown,
   Bell,
+  Film,
   HardDrive,
   LayoutDashboard,
   Monitor,
@@ -14,6 +15,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'));
 const NasPage = lazy(() => import('@/pages/NasPage'));
 const SeedingPage = lazy(() => import('@/pages/SeedingPage'));
+const MediaPage = lazy(() => import('@/pages/MediaPage'));
 const DevicesPage = lazy(() => import('@/pages/DevicesPage'));
 const PcPage = lazy(() => import('@/pages/PcPage'));
 const VpsPage = lazy(() => import('@/pages/VpsPage'));
@@ -52,10 +54,18 @@ export const NAV_ROUTES: NavRouteItem[] = [
       {
         id: 'seeding',
         path: '/seeding',
-        title: '刷流做种',
-        description: 'qBittorrent / MoviePilot 刷流与做种数据',
+        title: '下载与做种',
+        description: 'qBittorrent 实时传输、状态统计与做种监控',
         icon: ArrowUpDown,
         component: SeedingPage,
+      },
+      {
+        id: 'media',
+        path: '/media',
+        title: '影视',
+        description: 'MoviePilot 订阅、入库记录、下载任务与站点状态',
+        icon: Film,
+        component: MediaPage,
       },
       {
         id: 'devices',

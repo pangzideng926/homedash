@@ -2,13 +2,15 @@
 
 家庭服务器控制台：把家里 NAS、刷流做种、家用设备（Windows / macOS / Linux）、VPS 和各类账号告警集中到一个网页里查看。同时也是一套可复用的通用后台模板骨架。
 
-## 规划功能
+## 规划与已实现功能
 
-- NAS 状态与磁盘用量
-- qBittorrent / MoviePilot 刷流与做种数据
+- NAS 状态监控（Linux SSH 只读：CPU/内存、传感器温度、`/proc/mdstat` RAID、`/volume*` 卷与 Docker 容器列表）
+- qBittorrent 下载与做种只读监控（WebUI API v2 白名单：速度、分享率、状态分组、Tracker/分类统计与异常种子排查）
+- MoviePilot 影视订阅与入库监控（以官方仓库 `jxxghp/MoviePilot` 当前默认分支 v3 为准，只读接口白名单）
+- 加密集成凭据管理（在 `/settings` 页面配置，AES-256-GCM 加密与 `.env` 优先级覆盖）
 - 家用设备状态（多设备 SSH 只读采集，支持 Windows / macOS / Linux，界面增删改与连通性测试）
 - VPS 到期提醒
-- 账号登录与安全告警汇总
+- 账号登录与安全告警汇总（告警汇总待接入）
 - 通用后台骨架：布局、路由、登录鉴权
 - NAS Docker 一键部署
 
@@ -131,16 +133,18 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 
 #### 1. `app`（应用基础）
 
-| 变量名          | 必填 | 默认值                        | 说明                                                                                   |
-| --------------- | ---- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| `PORT`          | 否   | `3000`                        | HTTP 监听端口（`1`–`65535`）                                                           |
-| `HOST`          | 否   | `0.0.0.0`                     | 服务绑定地址                                                                           |
-| `NODE_ENV`      | 否   | `development`                 | 运行环境：`development` / `production` / `test`                                        |
-| `DATABASE_URL`  | 否   | `file:./data/homedash.db`     | SQLite 数据库文件路径                                                                  |
-| `WEB_DIST_DIR`  | 否   | `../web/dist`                 | 生产环境托管前端静态资源目录                                                           |
-| `COOKIE_SECURE` | 否   | 生产环境 `true`，其他 `false` | 会话 Cookie 是否强制 HTTPS；**局域网纯 HTTP 访问生产/Docker 环境时请显式设为 `false`** |
-| `TRUST_PROXY`   | 否   | `false`                       | 是否信任反向代理的 `X-Forwarded-For` 请求头作为客户端 IP（仅在可信反代后开启）         |
-| `TZ_DISPLAY`    | 否   | `Asia/Shanghai`               | 展示日期与 VPS 到期天数计算使用的 IANA 时区名称                                        |
+| 变量名                  | 必填 | 默认值                        | 说明                                                                                        |
+| ----------------------- | ---- | ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `PORT`                  | 否   | `3000`                        | HTTP 监听端口（`1`–`65535`）                                                                |
+| `HOST`                  | 否   | `0.0.0.0`                     | 服务绑定地址                                                                                |
+| `NODE_ENV`              | 否   | `development`                 | 运行环境：`development` / `production` / `test`                                             |
+| `DATABASE_URL`          | 否   | `file:./data/homedash.db`     | SQLite 数据库文件路径                                                                       |
+| `WEB_DIST_DIR`          | 否   | `../web/dist`                 | 生产环境托管前端静态资源目录                                                                |
+| `COOKIE_SECURE`         | 否   | 生产环境 `true`，其他 `false` | 会话 Cookie 是否强制 HTTPS；**局域网纯 HTTP 访问生产/Docker 环境时请显式设为 `false`**      |
+| `TRUST_PROXY`           | 否   | `false`                       | 是否信任反向代理的 `X-Forwarded-For` 请求头作为客户端 IP（仅在可信反代后开启）              |
+| `TZ_DISPLAY`            | 否   | `Asia/Shanghai`               | 展示日期与 VPS 到期天数计算使用的 IANA 时区名称                                             |
+| `INTEGRATIONS_FILE`     | 否   | —                             | 集成凭据本地 JSON 存储路径（如 `./secrets/integrations.json`），启用后支持在设置页保存配置  |
+| `CONFIG_ENCRYPTION_KEY` | 否   | —                             | 集成凭据加密密钥（至少 32 个字符；未设置时自动使用 `SESSION_SECRET` 通过 HKDF-SHA256 派生） |
 
 #### 2. `auth`（认证与会话）
 
@@ -153,18 +157,33 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 | `LOGIN_MAX_ATTEMPTS`  | 否   | `5`    | 单 IP 连续登录失败触发锁定的阈值                           |
 | `LOGIN_LOCK_MINUTES`  | 否   | `15`   | 触发登录限流后的锁定时长（分钟），锁定期返回 `429`         |
 
-#### 3. 可选采集模块（全部未填时视为“未配置”；同一模块不可部分填写）
+#### 3. 可选采集模块
+
+`nas`、`qbittorrent`、`moviepilot` 三个模块支持在 `.env` 中配置或通过 `/settings` 页面的“集成配置”区加密保存（`.env` 优先级高于文件，`.env` 可全部留空或仅配置部分字段如缓存/模拟开关）。
 
 | 模块          | 环境变量                                                                                                                  | 说明                                                                                                                 |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`                                                        | NAS SSH 采集连接参数与私钥路径                                                                                       |
-| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`                                                                              | qBittorrent WebUI 地址与凭据                                                                                         |
-| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`                                                                                  | MoviePilot 服务地址与 API 令牌                                                                                       |
+| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`、`NAS_MOCK`、`NAS_CACHE_SECONDS`                       | NAS 只读 SSH 采集参数与缓存时间（默认 `30` 秒）；`NAS_MOCK=true` 返回模拟 Debian 12 NAS 状态                         |
+| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`、`QBIT_MOCK`、`QBIT_CACHE_SECONDS`、`QBIT_TIMEOUT_MS`                        | qBittorrent WebUI 地址与凭据、缓存时间（默认 `10` 秒）及超时（默认 `8000` 毫秒）                                     |
+| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`、`MOVIEPILOT_MOCK`、`MOVIEPILOT_CACHE_SECONDS`、`MOVIEPILOT_TIMEOUT_MS`          | MoviePilot v3 地址与 API 令牌、缓存时间（默认 `60` 秒）及超时（默认 `8000` 毫秒）                                    |
 | `devices`     | `DEVICES_FILE`、`DEVICES_READONLY`、`DEVICES_MOCK`、`DEVICE_SSH_TIMEOUT_MS`、`DEVICE_CACHE_SECONDS`                       | 多设备家用主机（Windows / macOS / Linux）清单与只读 SSH 采集参数；`DEVICES_MOCK=true` 返回模拟 Windows 与 macOS 设备 |
 | `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH`、`WIN_SSH_TIMEOUT_MS`、`WIN_CACHE_SECONDS`、`WIN_MOCK` | 旧版兼容：未配置 `DEVICES_FILE` 时自动迁移为只读“Windows 设备”；`WIN_MOCK=true` 兼容等效于 `DEVICES_MOCK=true`       |
 | `vps`         | `VPS_LIST_FILE`、`VPS_READONLY`                                                                                           | 本地 VPS 信息 JSON 文件路径与只读模式开关（`VPS_READONLY=true` 时禁止页面编辑与 `PUT /api/vps` 写入）                |
 
-#### 4. 家用设备（`devices`）、macOS SSH 与 VPS 清单说明
+#### 4. 集成凭据存储、NAS / qBittorrent / MoviePilot 只读采集说明
+
+- **加密集成凭据存储（`INTEGRATIONS_FILE`）**：
+  - 敏感字段（`qbittorrent.password`、`moviepilot.apiToken`）使用 AES-256-GCM 加密（每个字段独立随机 12 字节 IV，存储 `{v:1, iv, tag, data}` Base64 结构），加密密钥来自 `CONFIG_ENCRYPTION_KEY`，未设置时使用 `SESSION_SECRET` 通过 HKDF-SHA256（固定 info `"homedash-integrations-v1"`）派生。非敏感字段明文存储，写入前生成 `.bak` 备份并执行原子替换。
+  - `.env` 中已设置的字段优先级最高，界面显示为只读并标注“由 .env 管理”，通过 `PUT /api/integrations/:module` 修改对应字段会返回 `409`。`GET /api/integrations` 永远只返回敏感字段是否已设置（`set`）与来源（`source`），绝不返回明文或密文。
+- **NAS 只读 SSH 采集**：
+  - 复用 `ssh2` 只读执行器与缓存框架，执行固定只读脚本采集主机信息、`/etc/os-release`、`/proc/uptime`、`/proc/loadavg`、`/proc/stat`（两次采样）、`/proc/meminfo`、`/sys/class/thermal` 与 `/sys/class/hwmon` 分组温度、`/proc/mdstat` RAID 状态、`df -kPT`（排除虚拟/系统分区并重点展示 `/volume*`）以及 `docker ps -a`。
+  - 绝不执行 `sudo`、重启、写文件或 `docker start/stop/rm` 等操作；`smartctl` 无权限或 `docker` 权限不足时自动安全跳过并在结果中标注中文原因。
+- **qBittorrent（WebUI API v2 只读）**：
+  - 登录 `POST /api/v2/auth/login` 复用 `SID` Cookie（遇 `403` 自动重登一次，识别 `"Fails."` 与 IP 封禁提示），仅调用只读白名单接口（`/api/v2/app/version`、`/api/v2/transfer/info`、`/api/v2/sync/maindata`、`/api/v2/torrents/info`、`/api/v2/torrents/categories`），不逐个请求 `/api/v2/torrents/trackers` 且严禁任何控制/删除接口。
+- **MoviePilot（以官方仓库 `jxxghp/MoviePilot` 当前默认分支 v3 为准）**：
+  - 接口全部来源于官方仓库 `jxxghp/MoviePilot` v3 分支，使用 `X-API-KEY` 请求头认证，严格限制只读 GET 白名单：`GET /api/v1/subscribe/list`、`GET /api/v1/history/transfer`、`GET /api/v1/download/`、`GET /api/v1/site/`（服务端显式剥离 `cookie`/`ua`/`apikey`/`token` 等敏感字段，仅保留 `id`/`name`/`domain`/`is_active`/`pri`）、`GET /api/v1/site/statistic`、`GET /api/v1/dashboard/downloader2`。绝不调用 `/api/v1/site/test/*`、`/download/start|stop`、`/transfer/now`、`/system/runscheduler*` 等有副作用接口。
+
+#### 5. 家用设备（`devices`）、macOS SSH 与 VPS 清单说明
 
 - **家用设备清单（`DEVICES_FILE`）**：可参考仓库根目录的 [`devices.example.json`](./devices.example.json) 复制为本地文件（如 `./secrets/devices.json`），格式为 `{"devices":[{"id","name","host","port","user","keyPath","os","enabled","note"}]}`，支持 `auto` / `windows` / `macos` / `linux`。在网页中编辑保存（`PUT /api/devices`）时，服务端先生成同目录 `.bak` 备份并通过临时文件原子替换；`DEVICES_READONLY=true` 时禁止编辑。**接口与界面绝不读取、上传或展示私钥内容**，仅保存服务器上私钥文件的路径 `keyPath`。
 - **旧版兼容与路由说明**：未配置 `DEVICES_FILE` 但配置了 `WIN_SSH_*` 时，系统会自动生成一台只读虚拟设备（`legacy-windows`），界面会提示配置 `DEVICES_FILE` 后可编辑；旧接口 `/api/windows/status` 保留为兼容别名（返回第一台启用 Windows 设备状态），旧前端路由 `/pc` 自动重定向到 `/devices`。

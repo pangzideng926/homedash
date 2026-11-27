@@ -38,6 +38,21 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(decimals)} ${units[unitIndex]}`;
 }
 
+export function formatSpeed(bytesPerSec: number): string {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) {
+    return '0 B/s';
+  }
+  const units = ['B/s', 'KiB/s', 'MiB/s', 'GiB/s'];
+  let value = bytesPerSec;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const decimals = unitIndex >= 2 ? 1 : 0;
+  return `${value.toFixed(decimals)} ${units[unitIndex]}`;
+}
+
 export function formatDateTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {

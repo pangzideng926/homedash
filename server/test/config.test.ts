@@ -92,18 +92,36 @@ describe('配置分组校验与状态报告', () => {
     expect(configError.message).not.toContain(passwordHash);
   });
 
-  it('可选模块部分填写部分缺失时报错，且错误信息不含已填写的密钥值', () => {
+  it('nas/qbittorrent/moviepilot 允许仅部分填写环境变量，但已填项格式非法时仍报错且不泄露密钥', () => {
     const fakeQbitPassword = 'fake-qbit-password-999';
     const fakeMpToken = 'fake-mp-token-888';
 
+    // 部分填写时允许正常解析（其余项可由网页集成配置补充）
+    const partialConfig = parseConfig({
+      ...BASE_ENV,
+      NAS_SSH_HOST: '192.0.2.10',
+      QBIT_URL: 'http://192.0.2.10:8080',
+      QBIT_PASSWORD: fakeQbitPassword,
+      MOVIEPILOT_API_TOKEN: fakeMpToken,
+    });
+    expect(partialConfig.nas?.NAS_SSH_HOST).toBe('192.0.2.10');
+    expect(partialConfig.nas?.NAS_CACHE_SECONDS).toBe(30);
+    expect(partialConfig.qbittorrent?.QBIT_CACHE_SECONDS).toBe(10);
+    expect(partialConfig.qbittorrent?.QBIT_TIMEOUT_MS).toBe(8000);
+    expect(partialConfig.moviepilot?.MOVIEPILOT_CACHE_SECONDS).toBe(60);
+    expect(partialConfig.moviepilot?.MOVIEPILOT_TIMEOUT_MS).toBe(8000);
+
+    // 已填项格式非法时仍抛出 ConfigError，且错误信息不含真实值
     let caughtError: unknown;
     try {
       parseConfig({
         ...BASE_ENV,
-        NAS_SSH_HOST: '192.0.2.10',
-        QBIT_URL: 'http://192.0.2.10:8080',
+        NAS_SSH_PORT: '99999',
+        QBIT_URL: 'invalid-qbit-url',
         QBIT_PASSWORD: fakeQbitPassword,
+        MOVIEPILOT_URL: 'ftp://invalid.example.com',
         MOVIEPILOT_API_TOKEN: fakeMpToken,
+        CONFIG_ENCRYPTION_KEY: 'short-key',
       });
     } catch (error) {
       caughtError = error;
@@ -113,14 +131,14 @@ describe('配置分组校验与状态报告', () => {
     const message = formatConfigError(caughtError as ConfigError);
 
     expect(message).toContain('NAS_SSH_PORT');
-    expect(message).toContain('NAS_SSH_USER');
-    expect(message).toContain('NAS_SSH_KEY_PATH');
-    expect(message).toContain('QBIT_USERNAME');
+    expect(message).toContain('QBIT_URL');
     expect(message).toContain('MOVIEPILOT_URL');
+    expect(message).toContain('CONFIG_ENCRYPTION_KEY');
 
     expect(message).not.toContain(fakeQbitPassword);
     expect(message).not.toContain(fakeMpToken);
-    expect(message).not.toContain('192.0.2.10');
+    expect(message).not.toContain('short-key');
+    expect(message).not.toContain('invalid-qbit-url');
   });
 
   it('可选模块全部未填为未配置，全部填写时解析成功并返回已配置状态', () => {
@@ -203,6 +221,8 @@ describe('配置分组校验与状态报告', () => {
       NAS_SSH_PORT: false,
       NAS_SSH_USER: false,
       NAS_SSH_KEY_PATH: false,
+      NAS_MOCK: false,
+      NAS_CACHE_SECONDS: false,
     });
     expect(partialStatus.modules.qbittorrent.status).toBe('incomplete');
     expect(partialStatus.modules.qbittorrent.keys.QBIT_PASSWORD).toBe(true);
