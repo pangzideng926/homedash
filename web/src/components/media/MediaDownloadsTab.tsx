@@ -1,9 +1,10 @@
 import { Download } from 'lucide-react';
-import { EmptyState, StatusBadge } from '@/components/common';
+import { EmptyState, ProgressBar, StatusBadge } from '@/components/common';
 import { formatBytes, formatSpeed } from '@/components/devices/device-utils';
 import { formatEta, formatTaskProgressPercent } from '@/components/downloaders/downloader-utils';
 import { getMediaDownloadStateVariant } from '@/components/media/media-utils';
 import { PosterImage } from '@/components/media/PosterImage';
+import { Card } from '@/components/ui/card';
 import type { MediaDownloadsResponse } from '@/lib/api';
 
 export function MediaDownloadsTab({ data }: { data: MediaDownloadsResponse }) {
@@ -28,10 +29,7 @@ export function MediaDownloadsTab({ data }: { data: MediaDownloadsResponse }) {
         const etaText = item.eta !== null ? formatEta(item.eta) : (item.leftTime ?? '—');
 
         return (
-          <div
-            key={`${item.hash || item.torrentName}-${idx}`}
-            className="flex gap-3.5 rounded-xl border border-border bg-card p-3.5"
-          >
+          <Card key={`${item.hash || item.torrentName}-${idx}`} className="flex gap-3.5 p-3.5">
             <div className="w-14 shrink-0">
               <PosterImage src={item.posterUrl} title={item.displayName} textClassName="text-lg" />
             </div>
@@ -69,20 +67,15 @@ export function MediaDownloadsTab({ data }: { data: MediaDownloadsResponse }) {
               </div>
 
               <div className="flex items-center gap-2.5">
-                <div
-                  role="progressbar"
-                  aria-label={`${item.displayName} 下载进度`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={pct}
-                  className="h-2 flex-1 overflow-hidden rounded-full bg-muted"
-                >
-                  <div
-                    className="h-full rounded-full bg-sky-500 transition-all"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="w-12 shrink-0 text-right text-xs font-semibold text-foreground">
+                <ProgressBar
+                  value={pct}
+                  tone="info"
+                  size="md"
+                  ariaLabel={`${item.displayName} 下载进度`}
+                  className="flex-1"
+                  trackClassName="h-2"
+                />
+                <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums text-foreground">
                   {pct}%
                 </span>
               </div>
@@ -94,7 +87,7 @@ export function MediaDownloadsTab({ data }: { data: MediaDownloadsResponse }) {
                 <span>剩余 {etaText}</span>
               </div>
             </div>
-          </div>
+          </Card>
         );
       })}
     </div>

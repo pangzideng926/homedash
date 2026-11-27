@@ -1,5 +1,5 @@
 import { Bookmark, CalendarClock } from 'lucide-react';
-import { EmptyState, StatusBadge } from '@/components/common';
+import { CardGrid, EmptyState, StatusBadge } from '@/components/common';
 import {
   formatMissingEpisodesBadge,
   formatNextAirLabel,
@@ -8,6 +8,7 @@ import {
   isMovieSubscription,
 } from '@/components/media/media-utils';
 import { PosterImage } from '@/components/media/PosterImage';
+import { Card } from '@/components/ui/card';
 import type { MediaSubscriptionsResponse } from '@/lib/api';
 
 export function MediaSubscriptionsTab({ data }: { data: MediaSubscriptionsResponse }) {
@@ -22,7 +23,7 @@ export function MediaSubscriptionsTab({ data }: { data: MediaSubscriptionsRespon
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <CardGrid columns={3}>
       {data.items.map((item) => {
         const isMovie = isMovieSubscription(item);
         const missingLabel = formatMissingEpisodesBadge(item.missingEpisodes, 6);
@@ -30,10 +31,7 @@ export function MediaSubscriptionsTab({ data }: { data: MediaSubscriptionsRespon
         const latestEp = item.latestEpisode ?? item.completedEpisode ?? 0;
 
         return (
-          <div
-            key={String(item.id)}
-            className="flex gap-3.5 rounded-xl border border-border bg-card p-3.5"
-          >
+          <Card key={String(item.id)} className="flex gap-3.5 p-3.5">
             <div className="w-20 shrink-0">
               <PosterImage src={item.posterUrl} title={item.name} />
             </div>
@@ -93,9 +91,9 @@ export function MediaSubscriptionsTab({ data }: { data: MediaSubscriptionsRespon
                 </span>
               </div>
             </div>
-          </div>
+          </Card>
         );
       })}
-    </div>
+    </CardGrid>
   );
 }

@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import {
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   Container,
   Cpu,
   FileText,
@@ -20,10 +18,13 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  CardGrid,
   EmptyState,
   ErrorState,
   LoadingState,
   PageHeader,
+  ProgressBar,
+  SectionCard,
   StatusBadge,
   type StatusVariant,
 } from '@/components/common';
@@ -44,24 +45,11 @@ import {
 
 const DOCKER_ACTION_TIMEOUT_MESSAGE = '操作已发出但等待超时，请稍后刷新查看容器状态';
 const DOCKER_TIMEOUT_AUTO_REFRESH_DELAY_MS = 3000;
-import { cn } from '@/lib/utils';
 
 function getTempVariant(tempC: number): 'error' | 'warning' | 'success' {
   if (tempC >= 85) return 'error';
   if (tempC >= 70) return 'warning';
   return 'success';
-}
-
-function getVolumeLevel(percent: number): 'danger' | 'warning' | 'normal' {
-  if (percent >= 90) return 'danger';
-  if (percent >= 80) return 'warning';
-  return 'normal';
-}
-
-function getBarClassByThreshold(percent: number, warnAt: number, dangerAt: number): string {
-  if (percent >= dangerAt) return 'bg-red-500';
-  if (percent >= warnAt) return 'bg-amber-500';
-  return 'bg-emerald-500';
 }
 
 function getContainerStatusBadge(container: NasDockerContainer): {
@@ -303,28 +291,25 @@ export function NasPage() {
       ) : (
         <div className="space-y-6">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <StatusBadge status="success" label="在线" />
+            <StatusBadge status="online" />
             {data.mock ? <StatusBadge status="info" label="模拟数据" showDot={false} /> : null}
             {data.cached ? <StatusBadge status="unknown" label="缓存命中" showDot={false} /> : null}
             <span>最近采集：{formatDateTime(data.checkedAt)}</span>
           </div>
 
           {/* 系统信息与 CPU/内存 */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Server className="size-4 text-muted-foreground" aria-hidden="true" />
-                    <span>系统信息</span>
-                  </CardTitle>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {data.data.hostname}
-                  </span>
-                </div>
-                <CardDescription>{data.data.osVersion}</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
+          <CardGrid columns={2}>
+            <SectionCard
+              icon={Server}
+              title="系统信息"
+              subtitle={data.data.osVersion}
+              actions={
+                <span className="font-mono text-xs text-muted-foreground">
+                  {data.data.hostname}
+                </span>
+              }
+            >
+              <div className="grid gap-3 text-sm sm:grid-cols-2">
                 <div className="rounded-lg bg-muted/40 p-3">
                   <div className="text-xs text-muted-foreground">运行时长</div>
                   <div className="mt-1 font-semibold text-foreground">
@@ -337,52 +322,32 @@ export function NasPage() {
                     {data.data.loadAvg.map((v) => v.toFixed(2)).join(' / ')}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </SectionCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Cpu className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <span>CPU 与内存</span>
-                </CardTitle>
-                <CardDescription>
-                  {data.data.cpu.model}（{data.data.cpu.cores} 核）
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
+            <SectionCard
+              icon={Cpu}
+              title="CPU 与内存"
+              subtitle={`${data.data.cpu.model}（${data.data.cpu.cores} 核）`}
+            >
+              <div className="space-y-4">
+                <ProgressBar
+                  ariaLabel="CPU 使用率"
+                  label={
                     <span className="flex items-center gap-1.5 text-muted-foreground">
                       <Cpu className="size-3.5" aria-hidden="true" />
                       <span>CPU 使用率</span>
                     </span>
-                    <span className="font-medium text-foreground">
-                      {data.data.cpu.loadPercent}%
-                    </span>
-                  </div>
-                  <div
-                    role="progressbar"
-                    aria-label="CPU 使用率"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={data.data.cpu.loadPercent}
-                    className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
-                  >
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-all',
-                        getBarClassByThreshold(data.data.cpu.loadPercent, 75, 90),
-                      )}
-                      style={{
-                        width: `${Math.min(100, Math.max(0, data.data.cpu.loadPercent))}%`,
-                      }}
-                    />
-                  </div>
-                </div>
+                  }
+                  valueText={`${data.data.cpu.loadPercent}%`}
+                  value={data.data.cpu.loadPercent}
+                  warnThreshold={75}
+                  dangerThreshold={90}
+                />
 
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
+                <ProgressBar
+                  ariaLabel="内存使用率"
+                  label={
                     <span className="flex items-center gap-1.5 text-muted-foreground">
                       <MemoryStick className="size-3.5" aria-hidden="true" />
                       <span>
@@ -390,494 +355,427 @@ export function NasPage() {
                         {formatBytes(data.data.memory.totalBytes)}）
                       </span>
                     </span>
-                    <span className="font-medium text-foreground">
-                      {data.data.memory.usedPercent}%
-                    </span>
-                  </div>
-                  <div
-                    role="progressbar"
-                    aria-label="内存使用率"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={data.data.memory.usedPercent}
-                    className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
-                  >
-                    <div
-                      className={cn(
-                        'h-full rounded-full transition-all',
-                        getBarClassByThreshold(data.data.memory.usedPercent, 80, 90),
-                      )}
-                      style={{
-                        width: `${Math.min(100, Math.max(0, data.data.memory.usedPercent))}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                  }
+                  valueText={`${data.data.memory.usedPercent}%`}
+                  value={data.data.memory.usedPercent}
+                  warnThreshold={80}
+                  dangerThreshold={90}
+                />
+              </div>
+            </SectionCard>
+          </CardGrid>
 
           {/* 温度卡 */}
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Thermometer className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <span>传感器温度</span>
-                </CardTitle>
-                {data.data.maxTemperatureC !== null ? (
-                  <StatusBadge
-                    status={getTempVariant(data.data.maxTemperatureC)}
-                    label={`最高 ${data.data.maxTemperatureC}℃`}
-                  />
-                ) : null}
-              </div>
-              <CardDescription>
+          <SectionCard
+            icon={Thermometer}
+            title="传感器温度"
+            actions={
+              data.data.maxTemperatureC !== null ? (
+                <StatusBadge
+                  status={getTempVariant(data.data.maxTemperatureC)}
+                  label={`最高 ${data.data.maxTemperatureC}℃`}
+                />
+              ) : undefined
+            }
+            subtitle={
+              data.data.smart.available
+                ? `已读取 ${data.data.smart.disks.length} 块硬盘 SMART 温度`
+                : `硬盘 SMART 温度：${data.data.smart.reason ?? '已跳过'}`
+            }
+          >
+            {data.data.temperatures.length === 0 && !data.data.smart.available ? (
+              <EmptyState compact hideIcon title="暂无可用温度传感器数据" />
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {data.data.temperatures.map((group) => (
+                  <div
+                    key={group.category}
+                    className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+                  >
+                    <div>
+                      <div className="text-xs font-medium text-foreground">{group.label}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {group.sensors.length} 个测点
+                      </div>
+                    </div>
+                    <StatusBadge
+                      status={getTempVariant(group.maxTempC)}
+                      label={`${group.maxTempC}℃`}
+                      showDot={false}
+                    />
+                  </div>
+                ))}
                 {data.data.smart.available
-                  ? `已读取 ${data.data.smart.disks.length} 块硬盘 SMART 温度`
-                  : `硬盘 SMART 温度：${data.data.smart.reason ?? '已跳过'}`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {data.data.temperatures.length === 0 && !data.data.smart.available ? (
-                <p className="text-sm text-muted-foreground">暂无可用温度传感器数据</p>
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {data.data.temperatures.map((group) => (
+                  ? data.data.smart.disks.map((disk) => (
+                      <div
+                        key={disk.device}
+                        className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-mono text-xs font-medium text-foreground">
+                            {disk.device}
+                          </div>
+                          {disk.model ? (
+                            <div className="truncate text-[11px] text-muted-foreground">
+                              {disk.model}
+                            </div>
+                          ) : null}
+                        </div>
+                        <StatusBadge
+                          status={getTempVariant(disk.tempC)}
+                          label={`${disk.tempC}℃`}
+                          showDot={false}
+                        />
+                      </div>
+                    ))
+                  : null}
+              </div>
+            )}
+          </SectionCard>
+
+          {/* 存储卡（RAID + 卷） */}
+          <SectionCard
+            icon={HardDrive}
+            title="存储与 RAID 阵列"
+            subtitle="展示软件 RAID 阵列健康度及挂载卷容量使用情况。"
+            contentClassName="gap-5"
+          >
+            {data.data.raids.length > 0 ? (
+              <div className="space-y-2">
+                <h3 className="text-xs font-medium text-muted-foreground">RAID 阵列</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {data.data.raids.map((raid) => (
                     <div
-                      key={group.category}
-                      className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+                      key={raid.name}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 p-3"
                     >
-                      <div>
-                        <div className="text-xs font-medium text-foreground">{group.label}</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {group.sensors.length} 个测点
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-foreground">
+                            {raid.name}
+                          </span>
+                          <span className="text-xs uppercase text-muted-foreground">
+                            {raid.level}
+                          </span>
+                          {raid.stateFlags ? (
+                            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                              {raid.stateFlags}
+                            </code>
+                          ) : null}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          成员：{raid.members.join(', ')}
                         </div>
                       </div>
                       <StatusBadge
-                        status={getTempVariant(group.maxTempC)}
-                        label={`${group.maxTempC}℃`}
-                        showDot={false}
+                        status={raid.healthy ? 'success' : 'error'}
+                        label={raid.statusLabel}
                       />
                     </div>
                   ))}
-                  {data.data.smart.available
-                    ? data.data.smart.disks.map((disk) => (
-                        <div
-                          key={disk.device}
-                          className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate font-mono text-xs font-medium text-foreground">
-                              {disk.device}
-                            </div>
-                            {disk.model ? (
-                              <div className="truncate text-[11px] text-muted-foreground">
-                                {disk.model}
-                              </div>
-                            ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-3">
+              <h3 className="text-xs font-medium text-muted-foreground">存储卷</h3>
+              {data.data.volumes.length === 0 ? (
+                <EmptyState compact hideIcon title="未检测到可用存储卷" />
+              ) : (
+                <div className="space-y-3">
+                  {data.data.volumes.map((vol) => (
+                    <div key={vol.mount} className="rounded-lg bg-muted/30 p-3">
+                      <ProgressBar
+                        ariaLabel={`${vol.mount} 使用率`}
+                        label={
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono font-semibold text-foreground">
+                              {vol.mount}
+                            </span>
+                            <span className="text-muted-foreground">
+                              {vol.device} · {vol.fsType}
+                            </span>
                           </div>
-                          <StatusBadge
-                            status={getTempVariant(disk.tempC)}
-                            label={`${disk.tempC}℃`}
-                            showDot={false}
-                          />
-                        </div>
-                      ))
-                    : null}
+                        }
+                        valueText={
+                          <>
+                            已用 {formatBytes(vol.usedBytes)} / {formatBytes(vol.totalBytes)}
+                            （可用 {formatBytes(vol.availableBytes)}，{vol.usedPercent}%）
+                          </>
+                        }
+                        value={vol.usedPercent}
+                        warnThreshold={80}
+                        dangerThreshold={90}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* 存储卡（RAID + 卷） */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <HardDrive className="size-4 text-muted-foreground" aria-hidden="true" />
-                <span>存储与 RAID 阵列</span>
-              </CardTitle>
-              <CardDescription>展示软件 RAID 阵列健康度及挂载卷容量使用情况。</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {data.data.raids.length > 0 ? (
-                <div className="space-y-2">
-                  <h3 className="text-xs font-medium text-muted-foreground">RAID 阵列</h3>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {data.data.raids.map((raid) => (
-                      <div
-                        key={raid.name}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 p-3"
-                      >
-                        <div className="min-w-0 space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm font-semibold text-foreground">
-                              {raid.name}
-                            </span>
-                            <span className="text-xs uppercase text-muted-foreground">
-                              {raid.level}
-                            </span>
-                            {raid.stateFlags ? (
-                              <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                                {raid.stateFlags}
-                              </code>
-                            ) : null}
-                          </div>
-                          <div className="truncate text-xs text-muted-foreground">
-                            成员：{raid.members.join(', ')}
-                          </div>
-                        </div>
-                        <StatusBadge
-                          status={raid.healthy ? 'success' : 'error'}
-                          label={raid.statusLabel}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="space-y-3">
-                <h3 className="text-xs font-medium text-muted-foreground">存储卷</h3>
-                {data.data.volumes.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">未检测到可用存储卷</p>
-                ) : (
-                  <div className="space-y-3">
-                    {data.data.volumes.map((vol) => {
-                      const level = getVolumeLevel(vol.usedPercent);
-                      return (
-                        <div key={vol.mount} className="space-y-1.5 rounded-lg bg-muted/30 p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-semibold text-foreground">
-                                {vol.mount}
-                              </span>
-                              <span className="text-muted-foreground">
-                                {vol.device} · {vol.fsType}
-                              </span>
-                            </div>
-                            <span className="font-medium text-foreground">
-                              已用 {formatBytes(vol.usedBytes)} / {formatBytes(vol.totalBytes)}
-                              （可用 {formatBytes(vol.availableBytes)}，{vol.usedPercent}%）
-                            </span>
-                          </div>
-                          <div
-                            role="progressbar"
-                            aria-label={`${vol.mount} 使用率`}
-                            aria-valuemin={0}
-                            aria-valuemax={100}
-                            aria-valuenow={vol.usedPercent}
-                            data-level={level}
-                            className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
-                          >
-                            <div
-                              className={cn(
-                                'h-full rounded-full transition-all',
-                                getBarClassByThreshold(vol.usedPercent, 80, 90),
-                              )}
-                              style={{
-                                width: `${Math.min(100, Math.max(0, vol.usedPercent))}%`,
-                              }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </SectionCard>
 
           {/* Docker 容器卡片网格 */}
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Container className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <span>Docker 容器</span>
-                </CardTitle>
-                {data.data.docker.available && !actionsEnabled ? (
-                  <StatusBadge status="unknown" label="Docker 操作未开启" showDot={false} />
-                ) : null}
+          <SectionCard
+            icon={Container}
+            title="Docker 容器"
+            subtitle="查看宿主机 Docker 容器状态、实时资源占用与只读日志；受保护容器不允许停止或重启。"
+            actions={
+              data.data.docker.available && !actionsEnabled ? (
+                <StatusBadge status="unknown" label="Docker 操作未开启" showDot={false} />
+              ) : undefined
+            }
+          >
+            {data.data.docker.available && !actionsEnabled ? (
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <Info className="size-4 shrink-0" aria-hidden="true" />
+                <span>
+                  Docker 操作未开启，当前仅支持只读状态与日志查看（可在环境变量设置{' '}
+                  <code>DOCKER_ACTIONS_ENABLED=true</code> 启用受限操作）。
+                </span>
               </div>
-              <CardDescription>
-                查看宿主机 Docker 容器状态、实时资源占用与只读日志；受保护容器不允许停止或重启。
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {data.data.docker.available && !actionsEnabled ? (
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                  <Info className="size-4 shrink-0" aria-hidden="true" />
-                  <span>
-                    Docker 操作未开启，当前仅支持只读状态与日志查看（可在环境变量设置{' '}
-                    <code>DOCKER_ACTIONS_ENABLED=true</code> 启用受限操作）。
-                  </span>
-                </div>
-              ) : null}
+            ) : null}
 
-              {actionFeedback ? (
-                <div
-                  role={actionFeedback.ok ? 'status' : 'alert'}
-                  className={
-                    actionFeedback.ok
-                      ? 'flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400'
-                      : 'flex items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400'
-                  }
-                >
-                  {actionFeedback.ok ? (
-                    <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
-                  ) : (
-                    <XCircle className="size-4 shrink-0" aria-hidden="true" />
-                  )}
-                  <span>{actionFeedback.message}</span>
-                </div>
-              ) : null}
+            {actionFeedback ? (
+              <div
+                role={actionFeedback.ok ? 'status' : 'alert'}
+                className={
+                  actionFeedback.ok
+                    ? 'flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400'
+                    : 'flex items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400'
+                }
+              >
+                {actionFeedback.ok ? (
+                  <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
+                ) : (
+                  <XCircle className="size-4 shrink-0" aria-hidden="true" />
+                )}
+                <span>{actionFeedback.message}</span>
+              </div>
+            ) : null}
 
-              {!data.data.docker.available ? (
-                <EmptyState
-                  title="Docker 信息不可用"
-                  description={data.data.docker.reason ?? '无法获取 Docker 容器列表'}
-                  icon={Container}
-                />
-              ) : data.data.docker.containers.length === 0 ? (
-                <EmptyState
-                  title="暂无容器"
-                  description="当前宿主机上没有任何 Docker 容器。"
-                  icon={Container}
-                />
-              ) : (
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {data.data.docker.containers.map((c) => {
-                    const badge = getContainerStatusBadge(c);
-                    const startKey = `${c.name}:start`;
-                    const stopKey = `${c.name}:stop`;
-                    const restartKey = `${c.name}:restart`;
-                    const isBusy =
-                      actionLoadingKey === startKey ||
-                      actionLoadingKey === stopKey ||
-                      actionLoadingKey === restartKey;
+            {!data.data.docker.available ? (
+              <EmptyState
+                compact
+                title="Docker 信息不可用"
+                description={data.data.docker.reason ?? '无法获取 Docker 容器列表'}
+                icon={Container}
+              />
+            ) : data.data.docker.containers.length === 0 ? (
+              <EmptyState
+                compact
+                title="暂无容器"
+                description="当前宿主机上没有任何 Docker 容器。"
+                icon={Container}
+              />
+            ) : (
+              <CardGrid columns={3}>
+                {data.data.docker.containers.map((c) => {
+                  const badge = getContainerStatusBadge(c);
+                  const startKey = `${c.name}:start`;
+                  const stopKey = `${c.name}:stop`;
+                  const restartKey = `${c.name}:restart`;
+                  const isBusy =
+                    actionLoadingKey === startKey ||
+                    actionLoadingKey === stopKey ||
+                    actionLoadingKey === restartKey;
 
-                    return (
-                      <div
-                        key={c.id}
-                        className="flex flex-col justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4"
-                      >
-                        <div className="space-y-2.5">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 space-y-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="truncate text-sm font-semibold text-foreground">
-                                  {c.name}
-                                </span>
-                                {c.protected ? (
-                                  <StatusBadge status="info" label="受保护" showDot={false} />
-                                ) : null}
-                              </div>
-                              <div className="truncate font-mono text-[11px] text-muted-foreground">
-                                {c.image}
-                              </div>
+                  return (
+                    <div
+                      key={c.id}
+                      className="flex flex-col justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4"
+                    >
+                      <div className="space-y-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="truncate text-sm font-semibold text-foreground">
+                                {c.name}
+                              </span>
+                              {c.protected ? (
+                                <StatusBadge status="info" label="受保护" showDot={false} />
+                              ) : null}
                             </div>
-                            <StatusBadge status={badge.status} label={badge.label} />
+                            <div className="truncate font-mono text-[11px] text-muted-foreground">
+                              {c.image}
+                            </div>
                           </div>
+                          <StatusBadge status={badge.status} label={badge.label} />
+                        </div>
 
-                          <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/40 p-2.5 text-xs">
-                            <div>
-                              <div className="text-[11px] text-muted-foreground">CPU</div>
-                              <div className="font-mono font-medium text-foreground">
-                                {c.cpuPercent || '-'}
-                              </div>
+                        <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/40 p-2.5 text-xs">
+                          <div>
+                            <div className="text-[11px] text-muted-foreground">CPU</div>
+                            <div className="font-mono font-medium text-foreground">
+                              {c.cpuPercent || '-'}
                             </div>
-                            <div>
-                              <div className="text-[11px] text-muted-foreground">内存</div>
-                              <div className="truncate font-mono font-medium text-foreground">
-                                {c.memUsage
-                                  ? `${c.memUsage}${c.memPercent ? ` (${c.memPercent})` : ''}`
-                                  : '-'}
-                              </div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] text-muted-foreground">内存</div>
+                            <div className="truncate font-mono font-medium text-foreground">
+                              {c.memUsage
+                                ? `${c.memUsage}${c.memPercent ? ` (${c.memPercent})` : ''}`
+                                : '-'}
                             </div>
-                            <div>
-                              <div className="text-[11px] text-muted-foreground">运行时长</div>
-                              <div className="truncate text-foreground">{c.runningFor || '-'}</div>
-                            </div>
-                            <div>
-                              <div className="text-[11px] text-muted-foreground">端口</div>
-                              <div className="truncate font-mono text-foreground">
-                                {c.ports || '-'}
-                              </div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] text-muted-foreground">运行时长</div>
+                            <div className="truncate text-foreground">{c.runningFor || '-'}</div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] text-muted-foreground">端口</div>
+                            <div className="truncate font-mono text-foreground">
+                              {c.ports || '-'}
                             </div>
                           </div>
                         </div>
+                      </div>
 
-                        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5">
-                          {actionsEnabled ? (
-                            badge.stopped ? (
+                      <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2.5">
+                        {actionsEnabled ? (
+                          badge.stopped ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              aria-label={`启动 ${c.name}`}
+                              disabled={isBusy}
+                              onClick={() => void handleRunDockerAction(c.name, 'start')}
+                            >
+                              <Play className="size-3.5" aria-hidden="true" />
+                              <span>{actionLoadingKey === startKey ? '启动中...' : '启动'}</span>
+                            </Button>
+                          ) : !c.protected ? (
+                            <>
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                aria-label={`启动 ${c.name}`}
+                                aria-label={`停止 ${c.name}`}
                                 disabled={isBusy}
-                                onClick={() => void handleRunDockerAction(c.name, 'start')}
+                                onClick={() =>
+                                  setConfirmModal({ container: c.name, action: 'stop' })
+                                }
                               >
-                                <Play className="size-3.5" aria-hidden="true" />
-                                <span>{actionLoadingKey === startKey ? '启动中...' : '启动'}</span>
+                                <Square className="size-3.5" aria-hidden="true" />
+                                <span>{actionLoadingKey === stopKey ? '停止中...' : '停止'}</span>
                               </Button>
-                            ) : !c.protected ? (
-                              <>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  aria-label={`停止 ${c.name}`}
-                                  disabled={isBusy}
-                                  onClick={() =>
-                                    setConfirmModal({ container: c.name, action: 'stop' })
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                aria-label={`重启 ${c.name}`}
+                                disabled={isBusy}
+                                onClick={() =>
+                                  setConfirmModal({ container: c.name, action: 'restart' })
+                                }
+                              >
+                                <RotateCw
+                                  className={
+                                    actionLoadingKey === restartKey
+                                      ? 'size-3.5 animate-spin'
+                                      : 'size-3.5'
                                   }
-                                >
-                                  <Square className="size-3.5" aria-hidden="true" />
-                                  <span>{actionLoadingKey === stopKey ? '停止中...' : '停止'}</span>
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  aria-label={`重启 ${c.name}`}
-                                  disabled={isBusy}
-                                  onClick={() =>
-                                    setConfirmModal({ container: c.name, action: 'restart' })
-                                  }
-                                >
-                                  <RotateCw
-                                    className={
-                                      actionLoadingKey === restartKey
-                                        ? 'size-3.5 animate-spin'
-                                        : 'size-3.5'
-                                    }
-                                    aria-hidden="true"
-                                  />
-                                  <span>
-                                    {actionLoadingKey === restartKey ? '重启中...' : '重启'}
-                                  </span>
-                                </Button>
-                              </>
-                            ) : null
-                          ) : null}
+                                  aria-hidden="true"
+                                />
+                                <span>
+                                  {actionLoadingKey === restartKey ? '重启中...' : '重启'}
+                                </span>
+                              </Button>
+                            </>
+                          ) : null
+                        ) : null}
 
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            aria-label={`日志 ${c.name}`}
-                            onClick={() => void loadContainerLogs(c.name, 200)}
-                          >
-                            <FileText className="size-3.5" aria-hidden="true" />
-                            <span>日志</span>
-                          </Button>
-                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`日志 ${c.name}`}
+                          onClick={() => void loadContainerLogs(c.name, 200)}
+                        >
+                          <FileText className="size-3.5" aria-hidden="true" />
+                          <span>日志</span>
+                        </Button>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    </div>
+                  );
+                })}
+              </CardGrid>
+            )}
+          </SectionCard>
 
           {/* 折叠式 Docker 操作审计日志 */}
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Shield className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <CardTitle className="text-base">Docker 操作审计记录</CardTitle>
+          <SectionCard
+            icon={Shield}
+            title="Docker 操作审计记录"
+            subtitle="记录所有 Docker 容器启停与重启请求（包括被策略拒绝的操作）。"
+            detailsTriggerPlacement="header"
+            detailsOpen={auditOpen}
+            onDetailsOpenChange={() => void handleToggleAudit()}
+            detailsLabel="查看最近 20 条审计记录"
+            detailsCollapseLabel="收起审计记录"
+            details={
+              auditLoading ? (
+                <LoadingState variant="skeleton" rows={3} message="正在加载审计记录..." />
+              ) : auditError ? (
+                <ErrorState
+                  compact
+                  title="加载审计记录失败"
+                  message={auditError}
+                  onRetry={() => void loadAuditEntries()}
+                />
+              ) : !auditEntries || auditEntries.length === 0 ? (
+                <EmptyState compact hideIcon title="暂无 Docker 操作审计记录" />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground">
+                        <th className="py-2 pr-4 font-medium">时间</th>
+                        <th className="py-2 pr-4 font-medium">操作者</th>
+                        <th className="py-2 pr-4 font-medium">来源 IP</th>
+                        <th className="py-2 pr-4 font-medium">容器</th>
+                        <th className="py-2 pr-4 font-medium">动作</th>
+                        <th className="py-2 pr-4 font-medium">结果</th>
+                        <th className="py-2 pr-4 font-medium">耗时</th>
+                        <th className="py-2 font-medium">备注</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {auditEntries.map((entry, idx) => {
+                        const badge = getAuditResultBadge(entry.result);
+                        return (
+                          <tr key={`${entry.timestamp}-${entry.container}-${idx}`}>
+                            <td className="py-2 pr-4 text-muted-foreground">
+                              {formatDateTime(entry.timestamp)}
+                            </td>
+                            <td className="py-2 pr-4 font-medium text-foreground">
+                              {entry.username}
+                            </td>
+                            <td className="py-2 pr-4 font-mono text-muted-foreground">
+                              {entry.clientIp}
+                            </td>
+                            <td className="py-2 pr-4 font-mono text-foreground">
+                              {entry.container}
+                            </td>
+                            <td className="py-2 pr-4 font-mono text-muted-foreground">
+                              {entry.action}
+                            </td>
+                            <td className="py-2 pr-4">
+                              <StatusBadge status={badge.status} label={badge.label} />
+                            </td>
+                            <td className="py-2 pr-4 text-muted-foreground">
+                              {entry.durationMs} ms
+                            </td>
+                            <td className="py-2 text-muted-foreground">{entry.error ?? '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleToggleAudit()}
-                >
-                  {auditOpen ? (
-                    <>
-                      <ChevronUp className="size-4" aria-hidden="true" />
-                      <span>收起审计记录</span>
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="size-4" aria-hidden="true" />
-                      <span>查看最近 20 条审计记录</span>
-                    </>
-                  )}
-                </Button>
-              </div>
-              <CardDescription>
-                记录所有 Docker 容器启停与重启请求（包括被策略拒绝的操作）。
-              </CardDescription>
-            </CardHeader>
-            {auditOpen ? (
-              <CardContent>
-                {auditLoading ? (
-                  <LoadingState variant="skeleton" rows={3} message="正在加载审计记录..." />
-                ) : auditError ? (
-                  <ErrorState
-                    title="加载审计记录失败"
-                    message={auditError}
-                    onRetry={() => void loadAuditEntries()}
-                  />
-                ) : !auditEntries || auditEntries.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无 Docker 操作审计记录</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-border text-muted-foreground">
-                          <th className="py-2 pr-4 font-medium">时间</th>
-                          <th className="py-2 pr-4 font-medium">操作者</th>
-                          <th className="py-2 pr-4 font-medium">来源 IP</th>
-                          <th className="py-2 pr-4 font-medium">容器</th>
-                          <th className="py-2 pr-4 font-medium">动作</th>
-                          <th className="py-2 pr-4 font-medium">结果</th>
-                          <th className="py-2 pr-4 font-medium">耗时</th>
-                          <th className="py-2 font-medium">备注</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/60">
-                        {auditEntries.map((entry, idx) => {
-                          const badge = getAuditResultBadge(entry.result);
-                          return (
-                            <tr key={`${entry.timestamp}-${entry.container}-${idx}`}>
-                              <td className="py-2 pr-4 text-muted-foreground">
-                                {formatDateTime(entry.timestamp)}
-                              </td>
-                              <td className="py-2 pr-4 font-medium text-foreground">
-                                {entry.username}
-                              </td>
-                              <td className="py-2 pr-4 font-mono text-muted-foreground">
-                                {entry.clientIp}
-                              </td>
-                              <td className="py-2 pr-4 font-mono text-foreground">
-                                {entry.container}
-                              </td>
-                              <td className="py-2 pr-4 font-mono text-muted-foreground">
-                                {entry.action}
-                              </td>
-                              <td className="py-2 pr-4">
-                                <StatusBadge status={badge.status} label={badge.label} />
-                              </td>
-                              <td className="py-2 pr-4 text-muted-foreground">
-                                {entry.durationMs} ms
-                              </td>
-                              <td className="py-2 text-muted-foreground">{entry.error ?? '-'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            ) : null}
-          </Card>
+              )
+            }
+          />
         </div>
       )}
 

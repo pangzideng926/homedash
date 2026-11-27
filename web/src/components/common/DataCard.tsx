@@ -19,7 +19,11 @@ export interface DataCardProps {
   status?: StatusVariant;
   statusLabel?: string;
   footer?: ReactNode;
+  compact?: boolean;
+  interactive?: boolean;
   className?: string;
+  valueClassName?: string;
+  iconClassName?: string;
 }
 
 export function DataCard({
@@ -30,30 +34,72 @@ export function DataCard({
   status,
   statusLabel,
   footer,
+  compact = false,
+  interactive = false,
   className,
+  valueClassName,
+  iconClassName,
 }: DataCardProps) {
   return (
-    <Card className={cn('flex flex-col justify-between', className)}>
-      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+    <Card
+      className={cn(
+        'flex min-w-0 flex-col justify-between',
+        interactive ? 'transition-colors hover:border-primary/40' : null,
+        className,
+      )}
+    >
+      <CardHeader
+        className={cn(
+          'flex flex-row items-start justify-between space-y-0',
+          compact ? 'px-4 pt-4 pb-2' : 'pb-3',
+        )}
+      >
         <div className="min-w-0 space-y-1">
-          <CardTitle className="text-base">{title}</CardTitle>
+          <CardTitle
+            className={compact ? 'text-xs font-medium text-muted-foreground' : 'text-base'}
+          >
+            {title}
+          </CardTitle>
           {description ? <CardDescription>{description}</CardDescription> : null}
         </div>
         {Icon ? (
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <Icon className="size-4" aria-hidden="true" />
-          </div>
+          compact ? (
+            <Icon
+              className={cn('size-4 shrink-0 text-muted-foreground', iconClassName)}
+              aria-hidden="true"
+            />
+          ) : (
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <Icon className={cn('size-4', iconClassName)} aria-hidden="true" />
+            </div>
+          )
         ) : null}
       </CardHeader>
 
-      <CardContent className="space-y-3">
+      <CardContent className={cn(compact ? 'px-4 pb-3 pt-0' : 'space-y-3')}>
         <div className="flex items-center justify-between gap-2">
-          <div className="text-2xl font-semibold tracking-tight text-foreground">{value}</div>
+          <div
+            className={cn(
+              'text-2xl font-semibold tracking-tight tabular-nums text-foreground',
+              valueClassName,
+            )}
+          >
+            {value}
+          </div>
           {status ? <StatusBadge status={status} label={statusLabel} /> : null}
         </div>
       </CardContent>
 
-      {footer ? <CardFooter className="text-xs text-muted-foreground">{footer}</CardFooter> : null}
+      {footer ? (
+        <CardFooter
+          className={cn(
+            'text-muted-foreground',
+            compact ? 'px-4 pb-4 pt-0 text-[11px]' : 'text-xs',
+          )}
+        >
+          {footer}
+        </CardFooter>
+      ) : null}
     </Card>
   );
 }

@@ -1,5 +1,5 @@
 import { ArrowUp, Download, Film, FolderCheck, HardDrive, Layers } from 'lucide-react';
-import { EmptyState } from '@/components/common';
+import { CardGrid, DataCard, EmptyState } from '@/components/common';
 import { formatBytes, formatSpeed } from '@/components/devices/device-utils';
 import { formatRelativeTime } from '@/components/media/media-utils';
 import { PosterImage } from '@/components/media/PosterImage';
@@ -11,68 +11,61 @@ export function MediaOverviewTab({ data }: { data: MediaOverviewResponse }) {
   return (
     <div className="space-y-6">
       {/* 顶部统计条 */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>下载中</span>
-            <Download className="size-4 text-sky-500" aria-hidden="true" />
-          </div>
-          <div className="mt-1.5 text-2xl font-semibold text-foreground">{stats.downloading}</div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">影视下载实例与 MP 合并去重</div>
-        </div>
+      <CardGrid columns={4}>
+        <DataCard
+          compact
+          title="下载中"
+          value={stats.downloading}
+          icon={Download}
+          iconClassName="text-sky-500"
+          footer="影视下载实例与 MP 合并去重"
+        />
 
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>待整理</span>
-            <Layers className="size-4 text-amber-500" aria-hidden="true" />
-          </div>
-          <div className="mt-1.5 text-2xl font-semibold text-foreground">
-            {stats.pendingTransfer ?? '—'}
-          </div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {stats.pendingTransfer === null ? '整理队列不可用' : 'MoviePilot 待整理队列'}
-          </div>
-        </div>
+        <DataCard
+          compact
+          title="待整理"
+          value={stats.pendingTransfer ?? '—'}
+          icon={Layers}
+          iconClassName="text-amber-500"
+          footer={stats.pendingTransfer === null ? '整理队列不可用' : 'MoviePilot 待整理队列'}
+        />
 
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>今日入库</span>
-            <FolderCheck className="size-4 text-emerald-500" aria-hidden="true" />
-          </div>
-          <div className="mt-1.5 text-2xl font-semibold text-foreground">
-            {stats.todayImported}
-            {stats.todayImportedApproximate ? '+' : ''}
-          </div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground">
-            {stats.todayImportedApproximate
+        <DataCard
+          compact
+          title="今日入库"
+          value={`${stats.todayImported}${stats.todayImportedApproximate ? '+' : ''}`}
+          icon={FolderCheck}
+          iconClassName="text-emerald-500"
+          footer={
+            stats.todayImportedApproximate
               ? '近似值（最近 100 条均在今日）'
-              : '按展示时区今日成功入库'}
-          </div>
-        </div>
+              : '按展示时区今日成功入库'
+          }
+        />
 
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>保种数</span>
-            <HardDrive className="size-4 text-emerald-500" aria-hidden="true" />
-          </div>
-          <div className="mt-1.5 text-2xl font-semibold text-foreground">
-            {stats.seeding ?? '—'}
-          </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-            {stats.seedUploadSpeed !== null ? (
-              <span className="inline-flex items-center gap-0.5">
-                <ArrowUp className="size-3 text-emerald-500" aria-hidden="true" />
-                {formatSpeed(stats.seedUploadSpeed)}
-              </span>
-            ) : (
-              <span>未配置保种实例</span>
-            )}
-            {stats.seedTotalUploaded !== null ? (
-              <span>总上传 {formatBytes(stats.seedTotalUploaded)}</span>
-            ) : null}
-          </div>
-        </div>
-      </div>
+        <DataCard
+          compact
+          title="保种数"
+          value={stats.seeding ?? '—'}
+          icon={HardDrive}
+          iconClassName="text-emerald-500"
+          footer={
+            <div className="flex flex-wrap items-center gap-x-2">
+              {stats.seedUploadSpeed !== null ? (
+                <span className="inline-flex items-center gap-0.5">
+                  <ArrowUp className="size-3 text-emerald-500" aria-hidden="true" />
+                  {formatSpeed(stats.seedUploadSpeed)}
+                </span>
+              ) : (
+                <span>未配置保种实例</span>
+              )}
+              {stats.seedTotalUploaded !== null ? (
+                <span>总上传 {formatBytes(stats.seedTotalUploaded)}</span>
+              ) : null}
+            </div>
+          }
+        />
+      </CardGrid>
 
       {stats.library ? (
         <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border/70 bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
