@@ -3,10 +3,34 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node -e \"console.log('web 前端脚手架占位：待下一步完善')\"",
-    "build": "node -e \"console.log('web 构建占位：待下一步完善')\"",
-    "test": "node -e \"console.log('web 测试占位：待下一步完善')\"",
-    "lint": "node -e \"console.log('web lint 占位：待下一步完善')\"",
-    "typecheck": "node -e \"console.log('web typecheck 占位：待下一步完善')\""
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.552.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "^7.9.5",
+    "tailwind-merge": "^3.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.16",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.19.1",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "jsdom": "^27.0.1",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^4.0.10"
   }
 }
