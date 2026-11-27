@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AppConfig, SafeLogger } from '../config/index.js';
 import { classifyDeviceError } from '../devices/service.js';
-import { executeSshCommand, type SshCommandExecutor } from '../devices/ssh-executor.js';
+import {
+  executeSshCommand,
+  type SshCommandExecutor,
+  type SshExecResult,
+} from '../devices/ssh-executor.js';
 import { resolveRepoRelativePath } from '../devices/store.js';
 import type { IntegrationsStore } from '../integrations/index.js';
 import { createMockNasStatus, type NasService } from './service.js';
@@ -19,6 +23,10 @@ export const DOCKER_ALLOWED_ACTIONS = ['start', 'stop', 'restart'] as const;
 export const DOCKER_LIST_NAMES_COMMAND = "docker ps -a --format '{{.Names}}'";
 
 const DEFAULT_SSH_TIMEOUT_MS = 8000;
+export const DEFAULT_DOCKER_ACTION_TIMEOUT_MS = 60_000;
+export const DEFAULT_DOCKER_STOP_TIMEOUT_SECONDS = 30;
+export const DOCKER_ACTION_TIMEOUT_MESSAGE = '操作已发出但等待超时，请稍后刷新查看容器状态';
+
 const DOCKER_ACTION_LABELS: Record<DockerAction, string> = {
   start: '启动',
   stop: '停止',
@@ -34,16 +42,39 @@ export function isAllowedDockerAction(action: string): action is DockerAction {
 }
 
 /**
+ * 计算 docker stop/restart 的优雅退出等待秒数：默认 30 秒，若操作超时配置小于 35000ms 则预留 5 秒余量。
+ */
+export function resolveDockerStopTimeoutSeconds(
+  actionTimeoutMs: number = DEFAULT_DOCKER_ACTION_TIMEOUT_MS,
+): number {
+  if (!Number.isFinite(actionTimeoutMs)) {
+    return DEFAULT_DOCKER_STOP_TIMEOUT_SECONDS;
+  }
+  if (actionTimeoutMs < 35_000) {
+    return Math.max(1, Math.floor(actionTimeoutMs / 1000) - 5);
+  }
+  return DEFAULT_DOCKER_STOP_TIMEOUT_SECONDS;
+}
+
+/**
  * 使用固定模板拼接 Docker 容器操作命令（仅允许 start|stop|restart，且对容器名做严格字符白名单校验）。
  */
-export function buildDockerActionCommand(action: DockerAction, name: string): string {
+export function buildDockerActionCommand(
+  action: DockerAction,
+  name: string,
+  actionTimeoutMs: number = DEFAULT_DOCKER_ACTION_TIMEOUT_MS,
+): string {
   if (!isAllowedDockerAction(action)) {
     throw new Error(`不允许的 Docker 操作：${action}`);
   }
   if (!isValidDockerContainerName(name)) {
     throw new Error('容器名称格式无效');
   }
-  return `docker ${action} -- '${name}'`;
+  if (action === 'start') {
+    return `docker start -- '${name}'`;
+  }
+  const waitSeconds = resolveDockerStopTimeoutSeconds(actionTimeoutMs);
+  return `docker ${action} -t ${waitSeconds} -- '${name}'`;
 }
 
 /**
@@ -133,11 +164,12 @@ export interface CreateNasDockerServiceOptions {
   now?: () => number;
   logger?: SafeLogger;
   timeoutMs?: number;
+  actionTimeoutMs?: number;
 }
 
 export type DockerActionServiceResult =
   | { ok: true; status: 200; data: DockerActionResponse }
-  | { ok: false; status: 400 | 403 | 404 | 500 | 502; error: string };
+  | { ok: false; status: 400 | 403 | 404 | 500 | 502 | 504; error: string };
 
 export type DockerLogsServiceResult =
   | { ok: true; status: 200; data: DockerLogsResponse }
@@ -176,6 +208,10 @@ export function createNasDockerService(
   const logger = options?.logger;
   const timeoutMs =
     options?.timeoutMs ?? config.devices?.DEVICE_SSH_TIMEOUT_MS ?? DEFAULT_SSH_TIMEOUT_MS;
+  const actionTimeoutMs =
+    options?.actionTimeoutMs ??
+    config.nas?.DOCKER_ACTION_TIMEOUT_MS ??
+    DEFAULT_DOCKER_ACTION_TIMEOUT_MS;
 
   function getAuditFilePath(): string {
     const configured = config.nas?.DOCKER_AUDIT_FILE ?? './data/docker-audit.log';
@@ -200,9 +236,10 @@ export function createNasDockerService(
       const { name, action, username, clientIp } = params;
 
       const failAndAudit = (
-        status: 400 | 403 | 404 | 500 | 502,
+        status: 400 | 403 | 404 | 500 | 502 | 504,
         result: 'rejected' | 'failed',
         errorMessage: string,
+        auditError: string = errorMessage,
       ): DockerActionServiceResult => {
         recordAudit({
           username,
@@ -211,7 +248,7 @@ export function createNasDockerService(
           action,
           result,
           durationMs: Math.max(0, getNow() - startedAt),
-          error: errorMessage,
+          error: auditError,
         });
         return { ok: false, status, error: errorMessage };
       };
@@ -304,15 +341,30 @@ export function createNasDockerService(
           return failAndAudit(404, 'rejected', '未找到指定容器');
         }
 
-        const actionCommand = buildDockerActionCommand(action, name);
-        const actionResult = await executor({
-          host: resolvedNas.host,
-          port: resolvedNas.port,
-          username: resolvedNas.user,
-          privateKey,
-          command: actionCommand,
-          timeoutMs,
-        });
+        const actionCommand = buildDockerActionCommand(action, name, actionTimeoutMs);
+        let actionResult: SshExecResult;
+        try {
+          actionResult = await executor({
+            host: resolvedNas.host,
+            port: resolvedNas.port,
+            username: resolvedNas.user,
+            privateKey,
+            command: actionCommand,
+            timeoutMs: actionTimeoutMs,
+          });
+        } catch (actionError) {
+          const classified = classifyDeviceError(actionError);
+          if (classified.errorCode === 'TIMEOUT') {
+            nasService.invalidateCache();
+            return failAndAudit(
+              504,
+              'failed',
+              DOCKER_ACTION_TIMEOUT_MESSAGE,
+              `${DOCKER_ACTION_TIMEOUT_MESSAGE}（timeout）`,
+            );
+          }
+          return failAndAudit(502, 'failed', classified.error);
+        }
 
         if (actionResult.code !== 0) {
           const stderrSummary = actionResult.stderr.trim().split(/\r?\n/)[0]?.trim();

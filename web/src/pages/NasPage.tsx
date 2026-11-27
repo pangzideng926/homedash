@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import {
   CheckCircle2,
@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '@/hooks/useApi';
 import {
+  ApiError,
   executeNasDockerAction,
   fetchNasDockerAudit,
   fetchNasDockerLogs,
@@ -40,6 +41,9 @@ import {
   type DockerAuditEntry,
   type NasDockerContainer,
 } from '@/lib/api';
+
+const DOCKER_ACTION_TIMEOUT_MESSAGE = '操作已发出但等待超时，请稍后刷新查看容器状态';
+const DOCKER_TIMEOUT_AUTO_REFRESH_DELAY_MS = 3000;
 import { cn } from '@/lib/utils';
 
 function getTempVariant(tempC: number): 'error' | 'warning' | 'success' {
@@ -120,6 +124,20 @@ export function NasPage() {
   const [auditError, setAuditError] = useState<string | null>(null);
   const [auditEntries, setAuditEntries] = useState<DockerAuditEntry[] | null>(null);
 
+  const autoRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (autoRefreshTimerRef.current !== null) {
+        clearTimeout(autoRefreshTimerRef.current);
+        autoRefreshTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const loadAuditEntries = async () => {
     setAuditLoading(true);
     setAuditError(null);
@@ -133,7 +151,11 @@ export function NasPage() {
     }
   };
 
-  const handleForceRefresh = async () => {
+  const handleForceRefresh = useCallback(async () => {
+    if (autoRefreshTimerRef.current !== null) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
     setRefreshing(true);
     try {
       await fetchNasStatus({ refresh: true });
@@ -141,11 +163,17 @@ export function NasPage() {
     } catch {
       await refetch();
     } finally {
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setRefreshing(false);
+      }
     }
-  };
+  }, [refetch]);
 
   const handleRunDockerAction = async (container: string, action: DockerAction) => {
+    if (autoRefreshTimerRef.current !== null) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
     const key = `${container}:${action}`;
     setActionLoadingKey(key);
     setActionFeedback(null);
@@ -160,10 +188,23 @@ export function NasPage() {
         await loadAuditEntries();
       }
     } catch (err) {
+      const isTimeout504 = err instanceof ApiError && err.status === 504;
       setActionFeedback({
         ok: false,
-        message: err instanceof Error ? err.message : 'Docker 容器操作失败',
+        message: isTimeout504
+          ? err.message && err.message !== '服务器内部错误，请稍后重试'
+            ? err.message
+            : DOCKER_ACTION_TIMEOUT_MESSAGE
+          : err instanceof Error
+            ? err.message
+            : 'Docker 容器操作失败',
       });
+      if (isTimeout504) {
+        autoRefreshTimerRef.current = setTimeout(() => {
+          autoRefreshTimerRef.current = null;
+          void handleForceRefresh();
+        }, DOCKER_TIMEOUT_AUTO_REFRESH_DELAY_MS);
+      }
       if (auditOpen) {
         await loadAuditEntries();
       }

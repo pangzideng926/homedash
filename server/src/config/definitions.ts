@@ -67,6 +67,7 @@ export const CONFIG_MODULE_KEYS = {
     'DOCKER_ACTIONS_ENABLED',
     'DOCKER_PROTECTED_CONTAINERS',
     'DOCKER_AUDIT_FILE',
+    'DOCKER_ACTION_TIMEOUT_MS',
   ],
   downloaders: ['DOWNLOADERS_MOCK', 'DOWNLOADER_CACHE_SECONDS', 'DOWNLOADER_TIMEOUT_MS'],
   qbittorrent: [
@@ -194,6 +195,7 @@ export interface NasSectionConfig {
   DOCKER_ACTIONS_ENABLED: boolean;
   DOCKER_PROTECTED_CONTAINERS: string[];
   DOCKER_AUDIT_FILE: string;
+  DOCKER_ACTION_TIMEOUT_MS: number;
 }
 
 export interface DownloadersSectionConfig {

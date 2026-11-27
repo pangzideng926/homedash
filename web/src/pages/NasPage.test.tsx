@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -78,6 +78,7 @@ function buildSampleNasResponse(dockerOverride?: Record<string, unknown>) {
 
 describe('NasPage NAS 监控与 Docker 容器管理页', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -264,5 +265,81 @@ describe('NasPage NAS 监控与 Docker 容器管理页', () => {
     await user.click(screen.getByRole('button', { name: '查看最近 20 条审计记录' }));
     expect(await screen.findByText('192.0.2.5')).toBeInTheDocument();
     expect(calledUrls.some((u) => u.includes('/api/nas/docker/audit?limit=20'))).toBe(true);
+  });
+
+  it('容器操作返回 504 时显示超时提示并在 3 秒后自动刷新一次状态', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let containerState = 'running';
+    let containerStatus = 'Up 2 days';
+    let statusRefreshCalls = 0;
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/api/nas/docker/qbittorrent/stop')) {
+        containerState = 'exited';
+        containerStatus = 'Exited (0) 1 second ago';
+        return jsonResponse({ error: '操作已发出但等待超时，请稍后刷新查看容器状态' }, 504);
+      }
+      if (url.includes('/api/nas/status?refresh=1')) {
+        statusRefreshCalls += 1;
+      }
+      return jsonResponse(
+        buildSampleNasResponse({
+          available: true,
+          actionsEnabled: true,
+          protectedContainers: ['homedash'],
+          containers: [
+            {
+              id: 'c1',
+              name: 'qbittorrent',
+              image: 'linuxserver/qbittorrent:latest',
+              state: containerState,
+              status: containerStatus,
+              runningFor: '2 days ago',
+              ports: '0.0.0.0:8080->8080/tcp',
+              protected: false,
+            },
+          ],
+        }),
+      );
+    });
+
+    render(
+      <MemoryRouter>
+        <NasPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('qbittorrent')).toBeInTheDocument();
+    expect(screen.getByText('运行')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '停止 qbittorrent' }));
+    await user.click(screen.getByRole('button', { name: '确认停止' }));
+
+    expect(
+      await screen.findByText('操作已发出但等待超时，请稍后刷新查看容器状态'),
+    ).toBeInTheDocument();
+    expect(statusRefreshCalls).toBe(0);
+
+    // 3 秒前尚未触发自动刷新
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2900);
+    });
+    expect(statusRefreshCalls).toBe(0);
+    expect(screen.getByText('运行')).toBeInTheDocument();
+
+    // 到达 3 秒时自动刷新一次，容器状态更新为已停止
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(statusRefreshCalls).toBe(1);
+    expect(await screen.findByText('已停止')).toBeInTheDocument();
+
+    // 后续不再重复刷新
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(statusRefreshCalls).toBe(1);
   });
 });
