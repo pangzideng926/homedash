@@ -166,3 +166,12 @@ dist/
 data/
 .DS_Store
 
+# 本地密钥与敏感数据文件
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+secrets/
+.secrets/
+vps.json
+

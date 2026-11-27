@@ -1,3 +1,4 @@
+import { lazy } from 'react';
 import {
   ArrowUpDown,
   Bell,
@@ -5,51 +6,94 @@ import {
   LayoutDashboard,
   Monitor,
   Server,
-  type LucideIcon,
+  Settings,
 } from 'lucide-react';
+import type { NavRouteItem } from '@/shell';
 
-export interface NavItem {
-  path: string;
-  label: string;
-  description: string;
-  icon: LucideIcon;
-}
+const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const OverviewPage = lazy(() => import('@/pages/OverviewPage'));
+const NasPage = lazy(() => import('@/pages/NasPage'));
+const SeedingPage = lazy(() => import('@/pages/SeedingPage'));
+const PcPage = lazy(() => import('@/pages/PcPage'));
+const VpsPage = lazy(() => import('@/pages/VpsPage'));
+const AlertsPage = lazy(() => import('@/pages/AlertsPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 
-export const NAV_ITEMS: NavItem[] = [
+export const NAV_ROUTES: NavRouteItem[] = [
   {
+    id: 'login',
+    path: '/login',
+    title: '登录',
+    requiresAuth: false,
+    hiddenInMenu: true,
+    component: LoginPage,
+  },
+  {
+    id: 'overview',
     path: '/',
-    label: '总览',
+    title: '总览',
     description: '家庭服务器整体运行概况',
     icon: LayoutDashboard,
+    component: OverviewPage,
   },
   {
-    path: '/nas',
-    label: 'NAS',
-    description: 'NAS 状态与磁盘用量监控',
-    icon: HardDrive,
+    id: 'monitoring',
+    title: '监控中心',
+    children: [
+      {
+        id: 'nas',
+        path: '/nas',
+        title: 'NAS',
+        description: 'NAS 状态与磁盘用量监控',
+        icon: HardDrive,
+        component: NasPage,
+      },
+      {
+        id: 'seeding',
+        path: '/seeding',
+        title: '刷流做种',
+        description: 'qBittorrent / MoviePilot 刷流与做种数据',
+        icon: ArrowUpDown,
+        component: SeedingPage,
+      },
+      {
+        id: 'pc',
+        path: '/pc',
+        title: '家用电脑',
+        description: '家用 Windows 主机状态与资源监控',
+        icon: Monitor,
+        component: PcPage,
+      },
+      {
+        id: 'vps',
+        path: '/vps',
+        title: 'VPS',
+        description: '云服务器状态与到期提醒管理',
+        icon: Server,
+        component: VpsPage,
+      },
+      {
+        id: 'alerts',
+        path: '/alerts',
+        title: '告警',
+        description: '账号登录与安全异常告警汇总',
+        icon: Bell,
+        component: AlertsPage,
+      },
+    ],
   },
   {
-    path: '/seeding',
-    label: '刷流做种',
-    description: 'qBittorrent / MoviePilot 刷流与做种数据',
-    icon: ArrowUpDown,
-  },
-  {
-    path: '/pc',
-    label: '家用电脑',
-    description: '家用 Windows 主机状态与资源监控',
-    icon: Monitor,
-  },
-  {
-    path: '/vps',
-    label: 'VPS',
-    description: '云服务器状态与到期提醒管理',
-    icon: Server,
-  },
-  {
-    path: '/alerts',
-    label: '告警',
-    description: '账号登录与安全异常告警汇总',
-    icon: Bell,
+    id: 'system',
+    title: '系统管理',
+    children: [
+      {
+        id: 'settings',
+        path: '/settings',
+        title: '设置',
+        description: '环境变量与模块配置状态',
+        icon: Settings,
+        component: SettingsPage,
+      },
+    ],
   },
 ];
