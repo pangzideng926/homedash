@@ -386,12 +386,17 @@ function buildMoviepilotCardView(
   }
 
   const d = data.data;
+  const downloadingCount =
+    d.activeDownloadsTotal ?? d.activeDownloads?.length ?? d.downloads.length;
+  const queueAvailable = d.transferQueue ? d.transferQueue.available : true;
+  const queueCount = d.transferQueueTotal ?? d.transferQueue?.total ?? 0;
+
   return {
     to: '/media',
     value: `${d.subscribes.length} 订阅`,
     status: 'success',
     statusLabel: '在线',
-    summaryLine: `订阅 ${d.subscribes.length} · 正在下载 ${d.downloads.length}`,
+    summaryLine: `订阅 ${d.subscribes.length} · 下载中 ${downloadingCount} / 待整理 ${queueAvailable ? queueCount : '不支持'}`,
     recentTransfers: d.transfers.slice(0, 3).map((t) => ({ title: t.title, status: t.status })),
   };
 }

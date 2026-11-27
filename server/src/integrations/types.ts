@@ -124,6 +124,7 @@ export interface ResolvedMoviepilotConfig {
   apiToken?: string;
   cacheSeconds: number;
   timeoutMs: number;
+  activeLimit: number;
 }
 
 export interface NasTestOverride {
@@ -195,6 +196,7 @@ export interface ResolvedDownloadersConfig {
   mock: boolean;
   cacheSeconds: number;
   timeoutMs: number;
+  activeTasksLimit: number;
   instances: ResolvedDownloaderInstance[];
 }
 

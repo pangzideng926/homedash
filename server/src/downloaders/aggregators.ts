@@ -1,6 +1,8 @@
 import type { ResolvedDownloaderInstance } from '../integrations/types.js';
 import { buildQbitSummaryData, extractTrackerDomain } from '../qbittorrent/service.js';
 import type {
+  DownloaderActiveTask,
+  DownloaderActiveTaskState,
   DownloaderGroupStat,
   DownloaderInstanceSummary,
   DownloaderProblemTorrent,
@@ -10,6 +12,151 @@ import type {
 } from './types.js';
 
 const MAX_PROBLEM_TORRENTS = 50;
+export const DEFAULT_ACTIVE_TASKS_LIMIT = 10;
+export const MAX_ACTIVE_TASKS_LIMIT = 100;
+
+interface RankedActiveTask {
+  tier: 0 | 1 | 2;
+  task: DownloaderActiveTask;
+}
+
+export function clampActiveLimit(limit?: number): number {
+  if (typeof limit !== 'number' || !Number.isFinite(limit)) {
+    return DEFAULT_ACTIVE_TASKS_LIMIT;
+  }
+  const intVal = Math.floor(limit);
+  return Math.min(MAX_ACTIVE_TASKS_LIMIT, Math.max(1, intVal));
+}
+
+function normalizeProgressFraction(raw: unknown): number {
+  const num = toFiniteNumber(raw, 0);
+  const clamped = Math.min(1, Math.max(0, num));
+  return Math.round(clamped * 10000) / 10000;
+}
+
+function normalizeRatio(raw: unknown): number {
+  const num = toFiniteNumber(raw, 0);
+  if (num <= 0) return 0;
+  return Math.round(num * 100) / 100;
+}
+
+export function normalizeQbitEta(raw: unknown): number | null {
+  const num = toFiniteNumber(raw, Number.NaN);
+  if (!Number.isFinite(num) || num < 0 || num >= 8640000) {
+    return null;
+  }
+  return Math.floor(num);
+}
+
+export function normalizeTransmissionEta(raw: unknown): number | null {
+  const num = toFiniteNumber(raw, Number.NaN);
+  if (!Number.isFinite(num) || num < 0) {
+    return null;
+  }
+  return Math.floor(num);
+}
+
+function sortRankedActiveTasks(entries: RankedActiveTask[]): DownloaderActiveTask[] {
+  return [...entries]
+    .sort(
+      (a, b) =>
+        a.tier - b.tier ||
+        b.task.dlSpeed - a.task.dlSpeed ||
+        b.task.upSpeed - a.task.upSpeed ||
+        a.task.name.localeCompare(b.task.name),
+    )
+    .map((entry) => entry.task);
+}
+
+function classifyQbitActiveTask(
+  t: Record<string, unknown>,
+  dlSpeed: number,
+  upSpeed: number,
+): { state: DownloaderActiveTaskState; tier: 0 | 1 | 2 } | null {
+  const rawState = toNonEmptyString(t.state, 'unknown');
+  const hasTraffic = dlSpeed > 0 || upSpeed > 0;
+
+  if (rawState === 'error' || rawState === 'missingFiles') {
+    return { state: '出错', tier: 0 };
+  }
+  if (rawState === 'metaDL' || rawState === 'forcedMetaDL') {
+    return { state: '元数据', tier: 1 };
+  }
+  if (rawState === 'stalledDL') {
+    return { state: '卡住', tier: 1 };
+  }
+  if (rawState === 'queuedDL') {
+    return { state: '等待', tier: 1 };
+  }
+  if (rawState === 'checkingDL' || rawState === 'checkingUP' || rawState === 'checkingResumeData') {
+    return { state: '校验中', tier: 1 };
+  }
+  if (rawState === 'downloading' || rawState === 'forcedDL' || rawState === 'allocating') {
+    return { state: '下载中', tier: 1 };
+  }
+  if (rawState === 'uploading' || rawState === 'stalledUP' || rawState === 'forcedUP') {
+    return hasTraffic ? { state: '做种中', tier: 2 } : null;
+  }
+  if (rawState === 'queuedUP') {
+    return hasTraffic ? { state: '等待', tier: 2 } : null;
+  }
+  if (
+    rawState === 'pausedDL' ||
+    rawState === 'pausedUP' ||
+    rawState === 'stoppedDL' ||
+    rawState === 'stoppedUP'
+  ) {
+    return hasTraffic ? { state: '已暂停', tier: 2 } : null;
+  }
+
+  if (dlSpeed > 0) {
+    return { state: '下载中', tier: 1 };
+  }
+  if (upSpeed > 0) {
+    return { state: '做种中', tier: 2 };
+  }
+  return null;
+}
+
+function classifyTransmissionActiveTask(
+  status: number,
+  isError: boolean,
+  isStalled: boolean,
+  dlSpeed: number,
+  upSpeed: number,
+): { state: DownloaderActiveTaskState; tier: 0 | 1 | 2 } | null {
+  const hasTraffic = dlSpeed > 0 || upSpeed > 0;
+
+  if (isError) {
+    return { state: '出错', tier: 0 };
+  }
+  if (status === 1 || status === 3) {
+    return { state: '等待', tier: 1 };
+  }
+  if (status === 2) {
+    return { state: '校验中', tier: 1 };
+  }
+  if (status === 4) {
+    return { state: isStalled ? '卡住' : '下载中', tier: 1 };
+  }
+  if (status === 5) {
+    return hasTraffic ? { state: '等待', tier: 2 } : null;
+  }
+  if (status === 6) {
+    return hasTraffic ? { state: '做种中', tier: 2 } : null;
+  }
+  if (status === 0) {
+    return hasTraffic ? { state: '已暂停', tier: 2 } : null;
+  }
+
+  if (dlSpeed > 0) {
+    return { state: '下载中', tier: 1 };
+  }
+  if (upSpeed > 0) {
+    return { state: '做种中', tier: 2 };
+  }
+  return null;
+}
 
 function toFiniteNumber(value: unknown, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -47,6 +194,7 @@ export function buildQbitInstanceSummary(params: {
   maindata: Record<string, unknown> | null;
   torrents: Array<Record<string, unknown>>;
   categories: Record<string, unknown>;
+  activeLimit?: number;
 }): DownloaderInstanceSummary {
   const qbitSummary = buildQbitSummaryData({
     version: params.version,
@@ -56,10 +204,36 @@ export function buildQbitInstanceSummary(params: {
     categories: params.categories,
   });
 
-  const totalSize = params.torrents.reduce((sum, item) => {
+  const rankedActive: RankedActiveTask[] = [];
+  let totalSize = 0;
+  for (const item of params.torrents) {
     const size = Math.max(0, toFiniteNumber(item.size ?? item.total_size, 0));
-    return sum + size;
-  }, 0);
+    totalSize += size;
+
+    const dlSpeed = Math.max(0, toFiniteNumber(item.dlspeed, 0));
+    const upSpeed = Math.max(0, toFiniteNumber(item.upspeed, 0));
+    const classified = classifyQbitActiveTask(item, dlSpeed, upSpeed);
+    if (!classified) continue;
+
+    const category = toNonEmptyString(item.category, '');
+    rankedActive.push({
+      tier: classified.tier,
+      task: {
+        name: toNonEmptyString(item.name, '未命名种子'),
+        state: classified.state,
+        progress: normalizeProgressFraction(item.progress),
+        dlSpeed,
+        upSpeed,
+        eta: normalizeQbitEta(item.eta),
+        size,
+        ratio: normalizeRatio(item.ratio),
+        ...(category ? { category } : {}),
+      },
+    });
+  }
+
+  const sortedActive = sortRankedActiveTasks(rankedActive);
+  const limit = clampActiveLimit(params.activeLimit);
 
   return {
     id: params.instance.id,
@@ -108,6 +282,8 @@ export function buildQbitInstanceSummary(params: {
       progress: item.progress,
     })),
     problemsTotal: qbitSummary.problemTorrentsTotal,
+    activeTasks: sortedActive.slice(0, limit),
+    activeTotal: sortedActive.length,
   };
 }
 
@@ -150,6 +326,7 @@ export function buildTransmissionInstanceSummary(params: {
   session: Record<string, unknown>;
   stats: Record<string, unknown>;
   torrents: Array<Record<string, unknown>>;
+  activeLimit?: number;
 }): DownloaderInstanceSummary {
   const version = toNonEmptyString(params.session.version, '未知版本');
   const upSpeed = Math.max(0, toFiniteNumber(params.stats.uploadSpeed, 0));
@@ -195,6 +372,7 @@ export function buildTransmissionInstanceSummary(params: {
   const trackerMap = new Map<string, DownloaderTrackerStat>();
   const labelMap = new Map<string, DownloaderGroupStat>();
   const allProblems: DownloaderProblemTorrent[] = [];
+  const rankedActive: RankedActiveTask[] = [];
 
   for (let i = 0; i < params.torrents.length; i += 1) {
     const t = params.torrents[i]!;
@@ -208,6 +386,7 @@ export function buildTransmissionInstanceSummary(params: {
       Math.max(0, Math.round(toFiniteNumber(t.percentDone, 0) * 1000) / 10),
     );
     const rateDownload = Math.max(0, toFiniteNumber(t.rateDownload, 0));
+    const rateUpload = Math.max(0, toFiniteNumber(t.rateUpload, 0));
     const peersConnected = Math.max(0, toFiniteNumber(t.peersConnected, 0));
     const errorCode = toFiniteNumber(t.error, 0);
     const errorString = toNonEmptyString(t.errorString, '');
@@ -284,6 +463,31 @@ export function buildTransmissionInstanceSummary(params: {
         progress,
       });
     }
+
+    const classified = classifyTransmissionActiveTask(
+      status,
+      isError,
+      isStalled,
+      rateDownload,
+      rateUpload,
+    );
+    if (classified) {
+      const labelText = rawLabels.map((l) => l.trim()).join(', ');
+      rankedActive.push({
+        tier: classified.tier,
+        task: {
+          name,
+          state: classified.state,
+          progress: normalizeProgressFraction(t.percentDone),
+          dlSpeed: rateDownload,
+          upSpeed: rateUpload,
+          eta: normalizeTransmissionEta(t.eta),
+          size,
+          ratio: normalizeRatio(t.uploadRatio),
+          ...(labelText ? { label: labelText } : {}),
+        },
+      });
+    }
   }
 
   const byTracker = [...trackerMap.values()].sort(
@@ -292,6 +496,8 @@ export function buildTransmissionInstanceSummary(params: {
   const byLabel = [...labelMap.values()].sort(
     (a, b) => b.seedingCount - a.seedingCount || b.size - a.size,
   );
+  const sortedActive = sortRankedActiveTasks(rankedActive);
+  const limit = clampActiveLimit(params.activeLimit);
 
   return {
     id: params.instance.id,
@@ -314,6 +520,8 @@ export function buildTransmissionInstanceSummary(params: {
     byLabel,
     problems: allProblems.slice(0, MAX_PROBLEM_TORRENTS),
     problemsTotal: allProblems.length,
+    activeTasks: sortedActive.slice(0, limit),
+    activeTotal: sortedActive.length,
   };
 }
 
@@ -322,10 +530,132 @@ export function buildTransmissionInstanceSummary(params: {
  */
 export function createMockDownloaderSummaries(
   nowMs: number = Date.now(),
+  activeLimit?: number,
 ): DownloaderInstanceSummary[] {
   const checkedAt = new Date(nowMs).toISOString();
   const gib = 1024 * 1024 * 1024;
+  const mib = 1024 * 1024;
   const tib = 1024 * gib;
+  const limit = clampActiveLimit(activeLimit);
+
+  const qbDownloadTasks: DownloaderActiveTask[] = [
+    {
+      name: 'Demo.Movie.2025.2160p.UHD.BluRay.x265.HDR10-GroupA',
+      state: '下载中',
+      progress: 0.72,
+      dlSpeed: 8.2 * mib,
+      upSpeed: 1.4 * mib,
+      eta: 4800,
+      size: 42.5 * gib,
+      ratio: 0.18,
+      category: 'movies',
+    },
+    {
+      name: 'Demo.Series.2026.S02E08.1080p.WEB-DL.H264-GroupB',
+      state: '下载中',
+      progress: 0.41,
+      dlSpeed: 4.2 * mib,
+      upSpeed: 0.6 * mib,
+      eta: 1500,
+      size: 6.4 * gib,
+      ratio: 0.09,
+      category: 'tv',
+    },
+    {
+      name: 'Demo.Documentary.2025.2160p.WEB-DL-GroupC',
+      state: '元数据',
+      progress: 0,
+      dlSpeed: 0,
+      upSpeed: 0,
+      eta: null,
+      size: 12.0 * gib,
+      ratio: 0,
+      category: 'tv',
+    },
+    {
+      name: 'Demo.Movie.2025.2160p.WEB-DL',
+      state: '卡住',
+      progress: 0.642,
+      dlSpeed: 0,
+      upSpeed: 0,
+      eta: null,
+      size: 18.5 * gib,
+      ratio: 0.12,
+      category: 'movies',
+    },
+    {
+      name: 'Demo.Classic.Film.2020.1080p.BluRay-GroupD',
+      state: '做种中',
+      progress: 1,
+      dlSpeed: 0,
+      upSpeed: 4.5 * mib,
+      eta: null,
+      size: 16.0 * gib,
+      ratio: 2.35,
+      category: 'movies',
+    },
+  ];
+
+  const qbBrushTasks: DownloaderActiveTask[] = [
+    {
+      name: 'Demo.Pack.2024.1080p.BluRay',
+      state: '出错',
+      progress: 1,
+      dlSpeed: 0,
+      upSpeed: 0,
+      eta: null,
+      size: 42 * gib,
+      ratio: 3.1,
+      category: 'freeleech',
+    },
+    {
+      name: 'Demo.Freeleech.Pack.2026.2160p.Remux',
+      state: '下载中',
+      progress: 0.56,
+      dlSpeed: 6.1 * mib,
+      upSpeed: 18.4 * mib,
+      eta: 3200,
+      size: 64 * gib,
+      ratio: 1.45,
+      category: 'freeleech',
+    },
+    {
+      name: 'Demo.FLAC.Collection.2025.Lossless',
+      state: '下载中',
+      progress: 0.85,
+      dlSpeed: 2.5 * mib,
+      upSpeed: 5.2 * mib,
+      eta: 420,
+      size: 4.8 * gib,
+      ratio: 2.1,
+      category: 'music',
+    },
+  ];
+
+  const trSeedTasks: DownloaderActiveTask[] = [
+    {
+      name: 'Demo.Archive.Remux.2023.2160p.BluRay',
+      state: '做种中',
+      progress: 1,
+      dlSpeed: 0,
+      upSpeed: 6.4 * mib,
+      eta: null,
+      size: 58 * gib,
+      ratio: 6.8,
+      label: 'remux',
+    },
+    {
+      name: 'Demo.Archive.Boxset.2022.1080p',
+      state: '做种中',
+      progress: 1,
+      dlSpeed: 0,
+      upSpeed: 3.4 * mib,
+      eta: null,
+      size: 92 * gib,
+      ratio: 4.15,
+      label: 'archive',
+    },
+  ];
 
   return [
     {
@@ -337,8 +667,8 @@ export function createMockDownloaderSummaries(
       checkedAt,
       cached: false,
       version: 'v5.0.2 (mock)',
-      upSpeed: 6.5 * 1024 * 1024,
-      dlSpeed: 12.4 * 1024 * 1024,
+      upSpeed: 6.5 * mib,
+      dlSpeed: 12.4 * mib,
       totalUploaded: 4.8 * tib,
       totalDownloaded: 3.2 * tib,
       ratio: 1.5,
@@ -373,6 +703,8 @@ export function createMockDownloaderSummaries(
         },
       ],
       problemsTotal: 1,
+      activeTasks: qbDownloadTasks.slice(0, limit),
+      activeTotal: qbDownloadTasks.length,
     },
     {
       id: 'mock-qb-brush',
@@ -383,8 +715,8 @@ export function createMockDownloaderSummaries(
       checkedAt,
       cached: false,
       version: 'v5.0.2 (mock)',
-      upSpeed: 28.2 * 1024 * 1024,
-      dlSpeed: 8.6 * 1024 * 1024,
+      upSpeed: 28.2 * mib,
+      dlSpeed: 8.6 * mib,
       totalUploaded: 32.5 * tib,
       totalDownloaded: 7.4 * tib,
       ratio: 4.39,
@@ -419,6 +751,8 @@ export function createMockDownloaderSummaries(
         },
       ],
       problemsTotal: 1,
+      activeTasks: qbBrushTasks.slice(0, limit),
+      activeTotal: qbBrushTasks.length,
     },
     {
       id: 'mock-tr-seed',
@@ -429,7 +763,7 @@ export function createMockDownloaderSummaries(
       checkedAt,
       cached: false,
       version: '4.0.6 (mock)',
-      upSpeed: 9.8 * 1024 * 1024,
+      upSpeed: 9.8 * mib,
       dlSpeed: 0,
       totalUploaded: 18.2 * tib,
       totalDownloaded: 2.1 * tib,
@@ -454,6 +788,8 @@ export function createMockDownloaderSummaries(
       ],
       problems: [],
       problemsTotal: 0,
+      activeTasks: trSeedTasks.slice(0, limit),
+      activeTotal: trSeedTasks.length,
     },
   ];
 }

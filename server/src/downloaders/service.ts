@@ -5,9 +5,11 @@ import { createQbitClient, QbitClientError, type QbitClientConfig } from '../qbi
 import {
   buildQbitInstanceSummary,
   buildTransmissionInstanceSummary,
+  clampActiveLimit,
   computeDownloadersTotals,
   createEmptyStateCounts,
   createMockDownloaderSummaries,
+  MAX_ACTIVE_TASKS_LIMIT,
 } from './aggregators.js';
 import {
   createTransmissionClient,
@@ -61,7 +63,7 @@ export interface DownloadersService {
   getAllSummaries: (options?: { refresh?: boolean }) => Promise<DownloadersSummaryResponse>;
   getInstanceSummary: (
     id: string,
-    options?: { refresh?: boolean },
+    options?: { refresh?: boolean; activeLimit?: number },
   ) => Promise<{ found: false } | { found: true; data: DownloaderInstanceSummary }>;
   testConnection: (
     rawBody: unknown,
@@ -117,6 +119,19 @@ export function createDownloadersService(
       ...(instance.type === 'qbittorrent' ? { byCategory: [] } : { byLabel: [] }),
       problems: [],
       problemsTotal: 0,
+      activeTasks: [],
+      activeTotal: 0,
+    };
+  }
+
+  function applyActiveLimit(
+    summary: DownloaderInstanceSummary,
+    activeLimit: number,
+  ): DownloaderInstanceSummary {
+    const effective = clampActiveLimit(activeLimit);
+    return {
+      ...summary,
+      activeTasks: summary.activeTasks.slice(0, effective),
     };
   }
 
@@ -173,6 +188,7 @@ export function createDownloadersService(
           maindata,
           torrents,
           categories,
+          activeLimit: MAX_ACTIVE_TASKS_LIMIT,
         });
 
         const cacheTtlMs = cacheSeconds * 1000;
@@ -226,6 +242,7 @@ export function createDownloadersService(
         session,
         stats,
         torrents,
+        activeLimit: MAX_ACTIVE_TASKS_LIMIT,
       });
 
       const cacheTtlMs = cacheSeconds * 1000;
@@ -295,7 +312,7 @@ export function createDownloadersService(
       const checkedAt = new Date(nowMs).toISOString();
 
       if (resolved.mock) {
-        const mockInstances = createMockDownloaderSummaries(nowMs);
+        const mockInstances = createMockDownloaderSummaries(nowMs, resolved.activeTasksLimit);
         return {
           configured: true,
           mock: true,
@@ -317,10 +334,13 @@ export function createDownloadersService(
       }
 
       const refresh = Boolean(reqOptions?.refresh);
-      const instances = await Promise.all(
+      const rawInstances = await Promise.all(
         enabledInstances.map((inst) =>
           getSingleSummary(inst, resolved.cacheSeconds, resolved.timeoutMs, refresh),
         ),
+      );
+      const instances = rawInstances.map((inst) =>
+        applyActiveLimit(inst, resolved.activeTasksLimit),
       );
 
       return {
@@ -334,13 +354,14 @@ export function createDownloadersService(
 
     async getInstanceSummary(
       id: string,
-      reqOptions?: { refresh?: boolean },
+      reqOptions?: { refresh?: boolean; activeLimit?: number },
     ): Promise<{ found: false } | { found: true; data: DownloaderInstanceSummary }> {
       const resolved = integrationsStore.resolveDownloadersConfig();
       const nowMs = getNow();
+      const effectiveLimit = clampActiveLimit(reqOptions?.activeLimit ?? resolved.activeTasksLimit);
 
       if (resolved.mock) {
-        const mockInstances = createMockDownloaderSummaries(nowMs);
+        const mockInstances = createMockDownloaderSummaries(nowMs, effectiveLimit);
         const foundMock = mockInstances.find((item) => item.id === id);
         if (!foundMock) {
           return { found: false };
@@ -359,7 +380,7 @@ export function createDownloadersService(
         resolved.timeoutMs,
         Boolean(reqOptions?.refresh),
       );
-      return { found: true, data: summary };
+      return { found: true, data: applyActiveLimit(summary, effectiveLimit) };
     },
 
     async testConnection(

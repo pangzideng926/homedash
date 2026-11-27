@@ -43,6 +43,22 @@ export interface DownloaderProblemTorrent {
   progress: number;
 }
 
+export type DownloaderActiveTaskState =
+  '下载中' | '做种中' | '等待' | '校验中' | '已暂停' | '出错' | '卡住' | '元数据';
+
+export interface DownloaderActiveTask {
+  name: string;
+  state: DownloaderActiveTaskState;
+  progress: number;
+  dlSpeed: number;
+  upSpeed: number;
+  eta: number | null;
+  size: number;
+  ratio: number;
+  category?: string;
+  label?: string;
+}
+
 export interface DownloaderInstanceSummary {
   id: string;
   name: string;
@@ -67,6 +83,8 @@ export interface DownloaderInstanceSummary {
   byLabel?: DownloaderGroupStat[];
   problems: DownloaderProblemTorrent[];
   problemsTotal: number;
+  activeTasks: DownloaderActiveTask[];
+  activeTotal: number;
 }
 
 export interface DownloadersSummaryTotals {

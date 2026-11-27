@@ -264,6 +264,7 @@ const downloadersFieldSchemas = {
   DOWNLOADERS_MOCK: booleanStringSchema,
   DOWNLOADER_CACHE_SECONDS: nonNegativeIntSchema('下载器状态缓存时间（秒）'),
   DOWNLOADER_TIMEOUT_MS: positiveIntSchema('下载器请求超时时间（毫秒）'),
+  DOWNLOADER_ACTIVE_TASKS_LIMIT: intInRangeSchema('下载器活跃任务条数上限', 1, 100),
 } as const;
 
 const qbittorrentFieldSchemas = {
@@ -281,6 +282,7 @@ const moviepilotFieldSchemas = {
   MOVIEPILOT_MOCK: booleanStringSchema,
   MOVIEPILOT_CACHE_SECONDS: nonNegativeIntSchema('MoviePilot 状态缓存时间（秒）'),
   MOVIEPILOT_TIMEOUT_MS: positiveIntSchema('MoviePilot 请求超时时间（毫秒）'),
+  MOVIEPILOT_ACTIVE_LIMIT: intInRangeSchema('MoviePilot 活跃任务条数上限', 1, 100),
 } as const;
 
 const windowsSshEnvSchema = z.object({
@@ -744,8 +746,16 @@ function parseDownloadersSection(
     fallbackTimeoutMs,
     issues,
   );
+  const activeTasksLimitRes = parseSingleKey(
+    'downloaders',
+    'DOWNLOADER_ACTIVE_TASKS_LIMIT',
+    downloadersFieldSchemas.DOWNLOADER_ACTIVE_TASKS_LIMIT,
+    env.DOWNLOADER_ACTIVE_TASKS_LIMIT,
+    10,
+    issues,
+  );
 
-  if (!mockRes.ok || !cacheRes.ok || !timeoutRes.ok) {
+  if (!mockRes.ok || !cacheRes.ok || !timeoutRes.ok || !activeTasksLimitRes.ok) {
     return undefined;
   }
 
@@ -753,6 +763,7 @@ function parseDownloadersSection(
     DOWNLOADERS_MOCK: mockRes.value,
     DOWNLOADER_CACHE_SECONDS: cacheRes.value,
     DOWNLOADER_TIMEOUT_MS: timeoutRes.value,
+    DOWNLOADER_ACTIVE_TASKS_LIMIT: activeTasksLimitRes.value,
   };
 }
 
@@ -884,8 +895,23 @@ function parseMoviepilotSection(
     8000,
     issues,
   );
+  const activeLimitRes = parseSingleKey(
+    'moviepilot',
+    'MOVIEPILOT_ACTIVE_LIMIT',
+    moviepilotFieldSchemas.MOVIEPILOT_ACTIVE_LIMIT,
+    env.MOVIEPILOT_ACTIVE_LIMIT,
+    10,
+    issues,
+  );
 
-  if (!urlRes.ok || !tokenRes.ok || !mockRes.ok || !cacheRes.ok || !timeoutRes.ok) {
+  if (
+    !urlRes.ok ||
+    !tokenRes.ok ||
+    !mockRes.ok ||
+    !cacheRes.ok ||
+    !timeoutRes.ok ||
+    !activeLimitRes.ok
+  ) {
     return undefined;
   }
 
@@ -895,6 +921,7 @@ function parseMoviepilotSection(
     MOVIEPILOT_MOCK: mockRes.value,
     MOVIEPILOT_CACHE_SECONDS: cacheRes.value,
     MOVIEPILOT_TIMEOUT_MS: timeoutRes.value,
+    MOVIEPILOT_ACTIVE_LIMIT: activeLimitRes.value,
   };
 }
 

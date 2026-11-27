@@ -922,6 +922,22 @@ export interface DownloaderProblemTorrent {
   progress: number;
 }
 
+export type DownloaderActiveTaskState =
+  '下载中' | '做种中' | '等待' | '校验中' | '已暂停' | '出错' | '卡住' | '元数据';
+
+export interface DownloaderActiveTask {
+  name: string;
+  state: DownloaderActiveTaskState;
+  progress: number;
+  dlSpeed: number;
+  upSpeed: number;
+  eta: number | null;
+  size: number;
+  ratio: number;
+  category?: string;
+  label?: string;
+}
+
 export interface DownloaderInstanceSummary {
   id: string;
   name: string;
@@ -946,6 +962,8 @@ export interface DownloaderInstanceSummary {
   byLabel?: DownloaderGroupStat[];
   problems: DownloaderProblemTorrent[];
   problemsTotal: number;
+  activeTasks: DownloaderActiveTask[];
+  activeTotal: number;
 }
 
 export interface DownloadersSummaryTotals {
@@ -1015,9 +1033,17 @@ export async function fetchDownloadersSummary(options?: {
 
 export async function fetchDownloaderDetail(
   id: string,
-  options?: { refresh?: boolean; signal?: AbortSignal },
+  options?: { refresh?: boolean; activeLimit?: number; signal?: AbortSignal },
 ): Promise<DownloaderInstanceSummary> {
-  const query = options?.refresh ? '?refresh=1' : '';
+  const params = new URLSearchParams();
+  if (options?.refresh) {
+    params.set('refresh', '1');
+  }
+  if (options?.activeLimit !== undefined) {
+    params.set('activeLimit', String(options.activeLimit));
+  }
+  const qs = params.toString();
+  const query = qs ? `?${qs}` : '';
   return apiRequest<DownloaderInstanceSummary>(
     `/api/downloaders/${encodeURIComponent(id)}/summary${query}`,
     {
@@ -1147,6 +1173,39 @@ export interface MoviepilotDownloadItem {
   downloader: string;
 }
 
+export interface MoviepilotActiveDownloadItem {
+  hash: string;
+  title: string;
+  name: string;
+  year: string;
+  seasonEpisode: string;
+  downloader: string;
+  size: number;
+  progress: number;
+  state: string;
+  dlSpeedText: string;
+  upSpeedText: string;
+  category: string;
+  siteName: string;
+  leftTime: string;
+}
+
+export interface MoviepilotTransferQueueItem {
+  title: string;
+  year: string;
+  season: string;
+  taskCount: number;
+  stateCounts: Record<string, number>;
+  sampleFiles: string[];
+}
+
+export interface MoviepilotTransferQueueSummary {
+  available: boolean;
+  reason?: string;
+  items: MoviepilotTransferQueueItem[];
+  total: number;
+}
+
 export interface MoviepilotSiteStatus {
   id: number | string;
   name: string;
@@ -1173,6 +1232,10 @@ export interface MoviepilotSummaryData {
   transfers: MoviepilotTransferItem[];
   transferTotal: number;
   downloads: MoviepilotDownloadItem[];
+  activeDownloads: MoviepilotActiveDownloadItem[];
+  activeDownloadsTotal: number;
+  transferQueue: MoviepilotTransferQueueSummary;
+  transferQueueTotal: number;
   sites: MoviepilotSiteStatus[];
   downloader: MoviepilotDownloaderStats | null;
 }

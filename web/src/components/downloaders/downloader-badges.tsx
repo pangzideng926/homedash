@@ -1,8 +1,10 @@
+import { StatusBadge } from '@/components/common';
 import {
   DOWNLOADER_TAG_MAP,
+  getActiveTaskStatusVariant,
   getDownloaderTypeLabel,
 } from '@/components/downloaders/downloader-utils';
-import type { DownloaderTag, DownloaderType } from '@/lib/api';
+import type { DownloaderActiveTaskState, DownloaderTag, DownloaderType } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 export function DownloaderTypeBadge({
@@ -41,5 +43,22 @@ export function DownloaderTagBadge({ tag, className }: { tag: DownloaderTag; cla
     >
       {meta.label}
     </span>
+  );
+}
+
+export function DownloaderTaskStateBadge({
+  state,
+  className,
+}: {
+  state: DownloaderActiveTaskState;
+  className?: string;
+}) {
+  return (
+    <StatusBadge
+      status={getActiveTaskStatusVariant(state)}
+      label={state}
+      showDot={false}
+      className={cn('px-2 py-0 text-[11px]', className)}
+    />
   );
 }

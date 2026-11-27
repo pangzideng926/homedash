@@ -1064,6 +1064,7 @@ export function createIntegrationsStore(
         10;
       const timeoutMs =
         config.downloaders?.DOWNLOADER_TIMEOUT_MS ?? config.qbittorrent?.QBIT_TIMEOUT_MS ?? 8000;
+      const activeTasksLimit = config.downloaders?.DOWNLOADER_ACTIVE_TASKS_LIMIT ?? 10;
       const mock = isDownloadersMockEnabled();
 
       if (mock) {
@@ -1072,6 +1073,7 @@ export function createIntegrationsStore(
           mock: true,
           cacheSeconds,
           timeoutMs,
+          activeTasksLimit,
           instances: buildMockDownloaders(true),
         };
       }
@@ -1084,6 +1086,7 @@ export function createIntegrationsStore(
         mock: false,
         cacheSeconds,
         timeoutMs,
+        activeTasksLimit,
         instances,
       };
     },
@@ -1147,6 +1150,7 @@ export function createIntegrationsStore(
         ...(apiToken ? { apiToken } : {}),
         cacheSeconds: envMp?.MOVIEPILOT_CACHE_SECONDS ?? 60,
         timeoutMs: envMp?.MOVIEPILOT_TIMEOUT_MS ?? 8000,
+        activeLimit: envMp?.MOVIEPILOT_ACTIVE_LIMIT ?? 10,
       };
     },
 

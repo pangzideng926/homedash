@@ -8,6 +8,7 @@ export const MOVIEPILOT_ALLOWED_GET_PATHS = [
   '/api/v1/subscribe/list',
   '/api/v1/history/transfer',
   '/api/v1/download/',
+  '/api/v1/transfer/queue/page',
   '/api/v1/site/',
   '/api/v1/site/statistic',
   '/api/v1/dashboard/downloader2',
@@ -55,6 +56,11 @@ export interface MoviepilotClient {
     count?: number,
   ) => Promise<unknown>;
   getDownloads: (cfg: MoviepilotClientConfig) => Promise<unknown>;
+  getTransferQueue: (
+    cfg: MoviepilotClientConfig,
+    page?: number,
+    count?: number,
+  ) => Promise<unknown>;
   getSites: (cfg: MoviepilotClientConfig) => Promise<unknown>;
   getSiteStatistics: (cfg: MoviepilotClientConfig) => Promise<unknown>;
   getDownloader2: (cfg: MoviepilotClientConfig) => Promise<unknown>;
@@ -145,6 +151,8 @@ export function createMoviepilotClient(fetchFn: typeof fetch = fetch): Moviepilo
     getTransferHistory: (cfg, page = 1, count = 20) =>
       requestGet(cfg, '/api/v1/history/transfer', `page=${page}&count=${count}`),
     getDownloads: (cfg) => requestGet(cfg, '/api/v1/download/'),
+    getTransferQueue: (cfg, page = 1, count = 20) =>
+      requestGet(cfg, '/api/v1/transfer/queue/page', `page=${page}&count=${count}`),
     getSites: (cfg) => requestGet(cfg, '/api/v1/site/'),
     getSiteStatistics: (cfg) => requestGet(cfg, '/api/v1/site/statistic'),
     getDownloader2: (cfg) => requestGet(cfg, '/api/v1/dashboard/downloader2'),

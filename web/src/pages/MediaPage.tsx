@@ -1,12 +1,44 @@
 import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
-import { Bookmark, Download, Film, FolderCheck, Globe, RotateCw } from 'lucide-react';
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from '@/components/common';
+import { Bookmark, Download, Film, FolderCheck, Globe, Layers, RotateCw } from 'lucide-react';
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  StatusBadge,
+  type StatusVariant,
+} from '@/components/common';
 import { formatBytes, formatDateTime, formatSpeed } from '@/components/devices/device-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '@/hooks/useApi';
-import { fetchMoviepilotSummary } from '@/lib/api';
+import { fetchMoviepilotSummary, type MoviepilotActiveDownloadItem } from '@/lib/api';
+
+const MAX_PREVIEW_ITEMS = 5;
+
+function getQueueStateMeta(state: string): { label: string; status: StatusVariant } {
+  const lower = state.trim().toLowerCase();
+  if (lower === 'waiting' || lower === 'pending') return { label: '等待中', status: 'unknown' };
+  if (lower === 'running' || lower === 'transferring' || lower === 'processing') {
+    return { label: '整理中', status: 'info' };
+  }
+  if (lower === 'completed' || lower === 'done' || lower === 'finished' || lower === 'success') {
+    return { label: '已完成', status: 'success' };
+  }
+  if (lower === 'failed' || lower === 'error') return { label: '失败', status: 'error' };
+  if (lower === 'cancelled' || lower === 'canceled') return { label: '已取消', status: 'warning' };
+  return { label: state || '未知', status: 'unknown' };
+}
+
+function getDownloadStateMeta(state: string): { label: string; status: StatusVariant } {
+  const lower = state.trim().toLowerCase();
+  if (lower === 'downloading') return { label: '下载中', status: 'info' };
+  if (lower === 'seeding' || lower === 'uploading') return { label: '做种中', status: 'success' };
+  if (lower === 'paused' || lower === 'stopped') return { label: '已暂停', status: 'unknown' };
+  if (lower === 'error' || lower === 'failed') return { label: '出错', status: 'error' };
+  return { label: state || '未知', status: 'unknown' };
+}
 
 function getSubscribeStateLabel(state: string): {
   label: string;
@@ -164,59 +196,208 @@ export function MediaPage() {
           </Card>
 
           {/* 正在下载 */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Download className="size-4 text-muted-foreground" aria-hidden="true" />
-                <span>正在下载（{data.data.downloads.length}）</span>
-              </CardTitle>
-              <CardDescription>展示当前下载进度、实时速度与预计剩余时间</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {data.data.downloads.length === 0 ? (
-                <p className="text-sm text-muted-foreground">当前没有正在下载的任务</p>
-              ) : (
-                <div className="space-y-3">
-                  {data.data.downloads.map((dl, idx) => (
-                    <div
-                      key={`${dl.name}-${idx}`}
-                      className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-foreground">{dl.title}</div>
-                          <div className="text-muted-foreground">
-                            {dl.siteName ? `${dl.siteName} · ` : ''}
-                            {dl.downloader ? `${dl.downloader} · ` : ''}
-                            {formatBytes(dl.size)}
+          {(() => {
+            const activeDownloads: MoviepilotActiveDownloadItem[] =
+              data.data.activeDownloads ??
+              data.data.downloads.map((dl, idx) => ({
+                hash: `legacy-${idx}`,
+                title: dl.title,
+                name: dl.name,
+                year: '',
+                seasonEpisode: '',
+                downloader: dl.downloader,
+                size: dl.size,
+                progress: dl.progress,
+                state: dl.state,
+                dlSpeedText: formatSpeed(dl.dlSpeed),
+                upSpeedText: formatSpeed(dl.upSpeed),
+                category: '',
+                siteName: dl.siteName,
+                leftTime: dl.leftTime,
+              }));
+            const activeDownloadsTotal = data.data.activeDownloadsTotal ?? activeDownloads.length;
+            const visibleDownloads = activeDownloads.slice(0, MAX_PREVIEW_ITEMS);
+
+            return (
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Download className="size-4 text-muted-foreground" aria-hidden="true" />
+                      <span>正在下载（共 {activeDownloadsTotal} 个）</span>
+                    </CardTitle>
+                    {activeDownloadsTotal > MAX_PREVIEW_ITEMS ? (
+                      <span className="text-xs text-muted-foreground">
+                        仅显示前 {MAX_PREVIEW_ITEMS} 条，共 {activeDownloadsTotal} 条
+                      </span>
+                    ) : null}
+                  </div>
+                  <CardDescription>
+                    只读展示当前下载任务进度、下载器、站点与速度信息
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {visibleDownloads.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">当前没有正在下载的任务</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {visibleDownloads.map((dl, idx) => {
+                        const stateMeta = getDownloadStateMeta(dl.state);
+                        return (
+                          <div
+                            key={`${dl.hash || dl.name}-${idx}`}
+                            className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <div className="min-w-0 flex-1 space-y-0.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className="truncate font-medium text-foreground"
+                                    title={dl.name || dl.title}
+                                  >
+                                    {dl.title}
+                                  </span>
+                                  {dl.seasonEpisode ? (
+                                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                                      {dl.seasonEpisode}
+                                    </span>
+                                  ) : null}
+                                  <StatusBadge
+                                    status={stateMeta.status}
+                                    label={stateMeta.label}
+                                    showDot={false}
+                                  />
+                                </div>
+                                <div className="text-muted-foreground">
+                                  {[dl.downloader, dl.siteName, dl.category, formatBytes(dl.size)]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                                <span>↓ {dl.dlSpeedText || '0 B/s'}</span>
+                                <span>↑ {dl.upSpeedText || '0 B/s'}</span>
+                                {dl.leftTime ? <span>剩余 {dl.leftTime}</span> : null}
+                                <span className="font-semibold text-foreground">
+                                  {dl.progress}%
+                                </span>
+                              </div>
+                            </div>
+                            <div
+                              role="progressbar"
+                              aria-label={`${dl.title} 下载进度`}
+                              aria-valuemin={0}
+                              aria-valuemax={100}
+                              aria-valuenow={dl.progress}
+                              className="h-2 w-full overflow-hidden rounded-full bg-muted"
+                            >
+                              <div
+                                className="h-full rounded-full bg-sky-500 transition-all"
+                                style={{ width: `${Math.min(100, Math.max(0, dl.progress))}%` }}
+                              />
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-muted-foreground">
-                          <span>下行 {formatSpeed(dl.dlSpeed)}</span>
-                          <span>上行 {formatSpeed(dl.upSpeed)}</span>
-                          {dl.leftTime ? <span>剩余 {dl.leftTime}</span> : null}
-                          <span className="font-semibold text-foreground">{dl.progress}%</span>
-                        </div>
-                      </div>
-                      <div
-                        role="progressbar"
-                        aria-label={`${dl.title} 下载进度`}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={dl.progress}
-                        className="h-2 w-full overflow-hidden rounded-full bg-muted"
-                      >
-                        <div
-                          className="h-full rounded-full bg-sky-500 transition-all"
-                          style={{ width: `${Math.min(100, Math.max(0, dl.progress))}%` }}
-                        />
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
+
+          {/* 整理队列 */}
+          {(() => {
+            const queue = data.data.transferQueue ?? { available: true, items: [], total: 0 };
+            const queueTotal = data.data.transferQueueTotal ?? queue.total;
+            const visibleQueue = queue.items.slice(0, MAX_PREVIEW_ITEMS);
+
+            return (
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Layers className="size-4 text-muted-foreground" aria-hidden="true" />
+                      <span>
+                        {queue.available ? `整理队列（共 ${queueTotal} 项）` : '整理队列'}
+                      </span>
+                    </CardTitle>
+                    {queue.available && queueTotal > MAX_PREVIEW_ITEMS ? (
+                      <span className="text-xs text-muted-foreground">
+                        仅显示前 {MAX_PREVIEW_ITEMS} 条，共 {queueTotal} 条
+                      </span>
+                    ) : null}
+                  </div>
+                  <CardDescription>
+                    只读展示待整理媒体、文件数量、状态计数与部分文件名
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {!queue.available ? (
+                    <p className="text-sm text-muted-foreground">
+                      {queue.reason || '当前 MoviePilot 版本不支持整理队列'}
+                    </p>
+                  ) : visibleQueue.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">当前整理队列为空</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {visibleQueue.map((item, idx) => (
+                        <div
+                          key={`${item.title}-${item.season}-${idx}`}
+                          className="space-y-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-2 font-medium text-foreground">
+                              <span>
+                                {item.title}
+                                {item.year ? ` (${item.year})` : ''}
+                              </span>
+                              {item.season ? (
+                                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+                                  {item.season}
+                                </span>
+                              ) : null}
+                            </div>
+                            <span className="text-muted-foreground">
+                              待整理 {item.taskCount} 个文件
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {Object.entries(item.stateCounts).map(([rawState, count]) => {
+                              const meta = getQueueStateMeta(rawState);
+                              return (
+                                <StatusBadge
+                                  key={rawState}
+                                  status={meta.status}
+                                  label={`${meta.label} ${count}`}
+                                  showDot={false}
+                                />
+                              );
+                            })}
+                          </div>
+
+                          {item.sampleFiles.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+                              {item.sampleFiles.map((fileName, fileIdx) => (
+                                <span
+                                  key={`${fileName}-${fileIdx}`}
+                                  className="max-w-xs truncate rounded bg-background/70 px-2 py-0.5 font-mono"
+                                  title={fileName}
+                                >
+                                  {fileName}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* 最近入库 */}
           <Card>

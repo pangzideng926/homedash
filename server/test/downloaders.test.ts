@@ -8,6 +8,7 @@ import { parseConfig } from '../src/config/index.js';
 import { createDatabase, type DatabaseConnection } from '../src/db/index.js';
 import {
   assertTransmissionRpcAllowed,
+  buildQbitInstanceSummary,
   buildTransmissionInstanceSummary,
   normalizeTransmissionRpcUrl,
   TRANSMISSION_ALLOWED_METHODS,
@@ -35,6 +36,11 @@ describe('Transmission 只读白名单与状态映射', () => {
     expect(() =>
       assertTransmissionRpcAllowed('torrent-get', { fields: [...TRANSMISSION_TORRENT_FIELDS] }),
     ).not.toThrow();
+
+    expect(TRANSMISSION_ALLOWED_METHODS).toEqual(['session-get', 'session-stats', 'torrent-get']);
+    expect(TRANSMISSION_TORRENT_FIELDS).toEqual(
+      expect.arrayContaining(['eta', 'rateDownload', 'rateUpload', 'percentDone']),
+    );
 
     const forbiddenMethods = [
       'torrent-start',
@@ -183,6 +189,249 @@ describe('Transmission 只读白名单与状态映射', () => {
     expect(summary.problems).toHaveLength(3); // ZeroSpeedZeroPeers + Seeding Stalled + Errored
     const erroredProblem = summary.problems.find((p) => p.name === 'Errored');
     expect(erroredProblem?.reason).toContain('Tracker unregistered torrent');
+  });
+
+  it('qB 与 TR 活跃任务筛选、中文状态映射、排序、eta 归一与 activeLimit 截断', () => {
+    const qbSummary = buildQbitInstanceSummary({
+      instance: {
+        id: 'qb-1',
+        name: 'qB 测试',
+        type: 'qbittorrent',
+        url: 'http://192.0.2.10:8080',
+        username: 'demo',
+        tags: ['download'],
+        enabled: true,
+        source: 'file',
+        readonly: false,
+      },
+      checkedAt: '2026-11-27T08:00:00.000Z',
+      cached: false,
+      version: 'v5.0.2',
+      transferInfo: { up_info_speed: 2000, dl_info_speed: 5000 },
+      maindata: null,
+      categories: {},
+      activeLimit: 5,
+      torrents: [
+        {
+          hash: 'idle-seed',
+          name: 'Idle.Seeding',
+          state: 'stalledUP',
+          progress: 1,
+          dlspeed: 0,
+          upspeed: 0,
+          eta: 8640000,
+          size: 1000,
+          ratio: 1.5,
+          category: 'movies',
+        },
+        {
+          hash: 'idle-paused',
+          name: 'Idle.Paused',
+          state: 'pausedDL',
+          progress: 0.3,
+          dlspeed: 0,
+          upspeed: 0,
+          eta: 8640000,
+          size: 1000,
+          ratio: 0.1,
+        },
+        {
+          hash: 'active-seed',
+          name: 'Active.Seeding',
+          state: 'uploading',
+          progress: 1,
+          dlspeed: 0,
+          upspeed: 900,
+          eta: 8640000,
+          size: 2000,
+          ratio: 2.345,
+          category: 'movies',
+        },
+        {
+          hash: 'dl-slow',
+          name: 'Downloading.Slow',
+          state: 'forcedDL',
+          progress: 0.25,
+          dlspeed: 1000,
+          upspeed: 200,
+          eta: 4800,
+          size: 3000,
+          ratio: 0.05,
+          category: 'tv',
+        },
+        {
+          hash: 'dl-fast',
+          name: 'Downloading.Fast',
+          state: 'downloading',
+          progress: 0.75,
+          dlspeed: 4000,
+          upspeed: 100,
+          eta: 600,
+          size: 4000,
+          ratio: 0.2,
+          category: 'movies',
+        },
+        {
+          hash: 'meta',
+          name: 'Meta.Fetching',
+          state: 'metaDL',
+          progress: 0,
+          dlspeed: 0,
+          upspeed: 0,
+          eta: 8640000,
+          size: 0,
+          ratio: 0,
+        },
+        {
+          hash: 'checking',
+          name: 'Checking.Files',
+          state: 'checkingDL',
+          progress: 0.5,
+          dlspeed: 0,
+          upspeed: 0,
+          eta: -1,
+          size: 5000,
+          ratio: 0,
+        },
+        {
+          hash: 'err',
+          name: 'Error.Task',
+          state: 'missingFiles',
+          progress: 1,
+          dlspeed: 0,
+          upspeed: 0,
+          eta: 8640000,
+          size: 6000,
+          ratio: 1.0,
+          category: 'movies',
+        },
+      ],
+    });
+
+    expect(qbSummary.activeTotal).toBe(6);
+    expect(qbSummary.activeTasks).toHaveLength(5);
+    expect(qbSummary.activeTasks.map((t) => [t.name, t.state, t.eta])).toEqual([
+      ['Error.Task', '出错', null],
+      ['Downloading.Fast', '下载中', 600],
+      ['Downloading.Slow', '下载中', 4800],
+      ['Checking.Files', '校验中', null],
+      ['Meta.Fetching', '元数据', null],
+    ]);
+    expect(qbSummary.activeTasks[1]?.progress).toBe(0.75);
+    expect(qbSummary.activeTasks[1]?.category).toBe('movies');
+
+    const trSummary = buildTransmissionInstanceSummary({
+      instance: {
+        id: 'tr-1',
+        name: 'TR 测试',
+        type: 'transmission',
+        url: 'http://192.0.2.12:9091',
+        username: 'demo',
+        tags: ['seed'],
+        enabled: true,
+        source: 'file',
+        readonly: false,
+      },
+      checkedAt: '2026-11-27T08:00:00.000Z',
+      cached: false,
+      session: { version: '4.0.6' },
+      stats: { uploadSpeed: 500, downloadSpeed: 1000 },
+      torrents: [
+        {
+          id: 1,
+          name: 'TR.Paused.Idle',
+          status: 0,
+          percentDone: 0.4,
+          rateDownload: 0,
+          rateUpload: 0,
+          eta: -1,
+          totalSize: 1000,
+          uploadRatio: 0.1,
+          error: 0,
+          isStalled: false,
+          labels: [],
+        },
+        {
+          id: 2,
+          name: 'TR.Seed.Idle',
+          status: 6,
+          percentDone: 1,
+          rateDownload: 0,
+          rateUpload: 0,
+          eta: -2,
+          totalSize: 2000,
+          uploadRatio: 2,
+          error: 0,
+          isStalled: false,
+          labels: ['archive'],
+        },
+        {
+          id: 3,
+          name: 'TR.Seed.Active',
+          status: 6,
+          percentDone: 1,
+          rateDownload: 0,
+          rateUpload: 500,
+          eta: -1,
+          totalSize: 3000,
+          uploadRatio: 3.5,
+          error: 0,
+          isStalled: false,
+          labels: ['remux'],
+        },
+        {
+          id: 4,
+          name: 'TR.Downloading',
+          status: 4,
+          percentDone: 0.6,
+          rateDownload: 1000,
+          rateUpload: 100,
+          eta: 300,
+          totalSize: 4000,
+          uploadRatio: 0.25,
+          error: 0,
+          isStalled: false,
+          peersConnected: 3,
+          labels: ['hd'],
+        },
+        {
+          id: 5,
+          name: 'TR.Waiting',
+          status: 3,
+          percentDone: 0,
+          rateDownload: 0,
+          rateUpload: 0,
+          eta: -2,
+          totalSize: 5000,
+          uploadRatio: 0,
+          error: 0,
+          isStalled: false,
+          labels: [],
+        },
+        {
+          id: 6,
+          name: 'TR.Error',
+          status: 4,
+          percentDone: 0.2,
+          rateDownload: 0,
+          rateUpload: 0,
+          eta: -1,
+          totalSize: 6000,
+          uploadRatio: 0,
+          error: 2,
+          isStalled: false,
+          labels: ['bad'],
+        },
+      ],
+    });
+
+    expect(trSummary.activeTotal).toBe(4);
+    expect(trSummary.activeTasks.map((t) => [t.name, t.state, t.eta, t.label])).toEqual([
+      ['TR.Error', '出错', null, 'bad'],
+      ['TR.Downloading', '下载中', 300, 'hd'],
+      ['TR.Waiting', '等待', null, undefined],
+      ['TR.Seed.Active', '做种中', null, 'remux'],
+    ]);
   });
 });
 
@@ -748,5 +997,107 @@ describe('多实例下载器存储加密、迁移与 API 行为', () => {
       'qbittorrent',
       'transmission',
     ]);
+    expect(body.instances[0]?.activeTotal).toBe(5);
+    expect(body.instances[0]?.activeTasks.length).toBe(5);
+  });
+
+  it('GET /api/downloaders/:id/summary 支持 ?activeLimit=（1..100）且默认受 DOWNLOADER_ACTIVE_TASKS_LIMIT 控制', async () => {
+    const config = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      INTEGRATIONS_FILE: integrationsFile,
+      DOWNLOADER_CACHE_SECONDS: '60',
+      DOWNLOADER_ACTIVE_TASKS_LIMIT: '2',
+    });
+
+    const torrents = Array.from({ length: 6 }, (_, idx) => ({
+      hash: `h-${idx}`,
+      name: `Task.${idx}`,
+      state: 'downloading',
+      progress: 0.5,
+      dlspeed: (6 - idx) * 1000,
+      upspeed: 100,
+      eta: 600 + idx * 60,
+      size: 1024 * 1024,
+      ratio: 0.1,
+      category: 'movies',
+    }));
+
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/v2/auth/login') {
+        return new Response('Ok.', {
+          status: 200,
+          headers: { 'Set-Cookie': 'SID=sid-qb-limit; path=/' },
+        });
+      }
+      if (parsed.pathname === '/api/v2/app/version') return new Response('v5.0.2', { status: 200 });
+      if (parsed.pathname === '/api/v2/transfer/info') {
+        return new Response(JSON.stringify({ up_info_speed: 600, dl_info_speed: 21000 }));
+      }
+      if (parsed.pathname === '/api/v2/sync/maindata') {
+        return new Response(JSON.stringify({ server_state: { alltime_ul: 100, alltime_dl: 100 } }));
+      }
+      if (parsed.pathname === '/api/v2/torrents/info') {
+        return new Response(JSON.stringify(torrents));
+      }
+      if (parsed.pathname === '/api/v2/torrents/categories') {
+        return new Response(JSON.stringify({ movies: {} }));
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    const app = createApp(config, database.db, { fetchFn: fetchMock });
+    const cookie = await loginCookie(app);
+
+    await app.request('/api/downloaders', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        downloaders: [
+          {
+            id: 'qb-limit',
+            name: 'qB 限流测试',
+            type: 'qbittorrent',
+            url: 'http://192.0.2.15:8080',
+            username: 'demo',
+            password: 'fake-password',
+            tags: ['download'],
+            enabled: true,
+          },
+        ],
+      }),
+    });
+
+    // 默认按 DOWNLOADER_ACTIVE_TASKS_LIMIT=2 返回
+    const defaultRes = await app.request('/api/downloaders/qb-limit/summary', {
+      headers: { Cookie: cookie },
+    });
+    expect(defaultRes.status).toBe(200);
+    const defaultBody = (await defaultRes.json()) as DownloaderInstanceSummary;
+    expect(defaultBody.activeTotal).toBe(6);
+    expect(defaultBody.activeTasks).toHaveLength(2);
+
+    // 命中缓存时传入 ?activeLimit=5 仍可返回 5 条
+    const customRes = await app.request('/api/downloaders/qb-limit/summary?activeLimit=5', {
+      headers: { Cookie: cookie },
+    });
+    expect(customRes.status).toBe(200);
+    const customBody = (await customRes.json()) as DownloaderInstanceSummary;
+    expect(customBody.cached).toBe(true);
+    expect(customBody.activeTotal).toBe(6);
+    expect(customBody.activeTasks).toHaveLength(5);
+
+    // 非法 activeLimit 返回 400
+    for (const bad of ['0', '101', '-1', '1.5', 'abc']) {
+      const badRes = await app.request(`/api/downloaders/qb-limit/summary?activeLimit=${bad}`, {
+        headers: { Cookie: cookie },
+      });
+      expect(badRes.status).toBe(400);
+    }
   });
 });

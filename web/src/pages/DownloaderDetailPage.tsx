@@ -13,28 +13,38 @@ import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from '@
 import { formatBytes, formatDateTime, formatSpeed } from '@/components/devices/device-utils';
 import {
   DownloaderTagBadge,
+  DownloaderTaskStateBadge,
   DownloaderTypeBadge,
 } from '@/components/downloaders/downloader-badges';
-import { getDownloaderTypeFullName } from '@/components/downloaders/downloader-utils';
+import {
+  formatEta,
+  formatTaskProgressPercent,
+  getDownloaderTypeFullName,
+} from '@/components/downloaders/downloader-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '@/hooks/useApi';
 import { fetchDownloaderDetail } from '@/lib/api';
 
 type GroupTab = 'tracker' | 'group';
+const ACTIVE_LIMIT_OPTIONS = [10, 20, 50] as const;
 
 export function DownloaderDetailPage() {
   const { id = '' } = useParams<{ id: string }>();
   const [refreshing, setRefreshing] = useState(false);
   const [groupTab, setGroupTab] = useState<GroupTab>('tracker');
+  const [activeLimit, setActiveLimit] = useState<10 | 20 | 50>(10);
 
-  const fetcher = useCallback((signal: AbortSignal) => fetchDownloaderDetail(id, { signal }), [id]);
-  const { data, loading, error, refetch } = useApi(fetcher);
+  const fetcher = useCallback(
+    (signal: AbortSignal) => fetchDownloaderDetail(id, { activeLimit, signal }),
+    [id, activeLimit],
+  );
+  const { data, loading, error, refetch } = useApi(fetcher, [id, activeLimit]);
 
   const handleForceRefresh = async () => {
     setRefreshing(true);
     try {
-      await fetchDownloaderDetail(id, { refresh: true });
+      await fetchDownloaderDetail(id, { refresh: true, activeLimit });
       await refetch();
     } catch {
       await refetch();
@@ -208,6 +218,108 @@ export function DownloaderDetailPage() {
                 status={data.counts.error > 0 ? 'error' : 'unknown'}
                 label={`出错 ${data.counts.error}`}
               />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-3">
+              <div>
+                <CardTitle className="text-base">
+                  进行中的任务（共 {data.activeTotal ?? data.activeTasks?.length ?? 0} 个）
+                </CardTitle>
+                <CardDescription>
+                  仅展示正在下载、速度大于 0 的做种或出错任务（只读，按出错与速度排序）
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
+                {ACTIVE_LIMIT_OPTIONS.map((limitOption) => (
+                  <Button
+                    key={limitOption}
+                    type="button"
+                    size="sm"
+                    variant={activeLimit === limitOption ? 'default' : 'ghost'}
+                    onClick={() => setActiveLimit(limitOption)}
+                  >
+                    {limitOption} 条
+                  </Button>
+                ))}
+              </div>
+            </CardHeader>
+            <CardContent>
+              {(data.activeTasks ?? []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">暂无进行中的任务</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-muted-foreground">
+                        <th className="py-2 pr-4 font-medium">任务名称</th>
+                        <th className="py-2 pr-4 font-medium">状态</th>
+                        <th className="py-2 pr-4 font-medium">进度</th>
+                        <th className="py-2 pr-4 font-medium">下载速度</th>
+                        <th className="py-2 pr-4 font-medium">上传速度</th>
+                        <th className="py-2 pr-4 font-medium">剩余时间</th>
+                        <th className="py-2 pr-4 font-medium">体积</th>
+                        <th className="py-2 pr-4 font-medium">分享率</th>
+                        <th className="py-2 font-medium">{secondaryColumnName}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {(data.activeTasks ?? []).map((task, idx) => {
+                        const pct = formatTaskProgressPercent(task.progress);
+                        const groupVal = isQb ? task.category : task.label;
+                        return (
+                          <tr key={`${task.name}-${idx}`}>
+                            <td
+                              className="max-w-xs truncate py-2.5 pr-4 font-medium text-foreground"
+                              title={task.name}
+                            >
+                              {task.name}
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <DownloaderTaskStateBadge state={task.state} />
+                            </td>
+                            <td className="min-w-28 py-2.5 pr-4">
+                              <div className="flex items-center gap-2">
+                                <div
+                                  role="progressbar"
+                                  aria-label={`${task.name} 进度`}
+                                  aria-valuemin={0}
+                                  aria-valuemax={100}
+                                  aria-valuenow={pct}
+                                  className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"
+                                >
+                                  <div
+                                    className="h-full rounded-full bg-sky-500 transition-all"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </div>
+                                <span className="text-foreground">{pct}%</span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 pr-4 whitespace-nowrap text-foreground">
+                              ↓ {formatSpeed(task.dlSpeed)}
+                            </td>
+                            <td className="py-2.5 pr-4 whitespace-nowrap text-foreground">
+                              ↑ {formatSpeed(task.upSpeed)}
+                            </td>
+                            <td className="py-2.5 pr-4 whitespace-nowrap text-muted-foreground">
+                              {formatEta(task.eta)}
+                            </td>
+                            <td className="py-2.5 pr-4 whitespace-nowrap text-muted-foreground">
+                              {formatBytes(task.size)}
+                            </td>
+                            <td className="py-2.5 pr-4 text-muted-foreground">
+                              {task.ratio.toFixed(2)}
+                            </td>
+                            <td className="py-2.5 text-muted-foreground">{groupVal || '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </CardContent>
           </Card>
 

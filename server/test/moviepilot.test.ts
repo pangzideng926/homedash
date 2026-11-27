@@ -20,18 +20,27 @@ function extractCookiePair(setCookieHeader: string | null): string {
 }
 
 describe('MoviePilot v3 白名单与字段容错/敏感字段剥离', () => {
-  it('强制白名单仅放行 6 个只读 GET 接口，拦截任何写接口或站点测试接口', () => {
+  it('强制白名单仅放行 7 个只读 GET 接口，拦截任何写接口或站点测试接口', () => {
+    expect(MOVIEPILOT_ALLOWED_GET_PATHS).toContain('/api/v1/transfer/queue/page');
+    expect(MOVIEPILOT_ALLOWED_GET_PATHS).toHaveLength(7);
+
     for (const allowed of MOVIEPILOT_ALLOWED_GET_PATHS) {
       expect(() => assertMoviepilotRequestAllowed('GET', allowed)).not.toThrow();
     }
 
     const forbidden: Array<[string, string]> = [
       ['GET', '/api/v1/site/test/1'],
-      ['POST', '/api/v1/download/start'],
-      ['POST', '/api/v1/download/stop'],
+      ['GET', '/api/v1/transfer/now'],
       ['POST', '/api/v1/transfer/now'],
+      ['GET', '/api/v1/download/start'],
+      ['POST', '/api/v1/download/start'],
+      ['GET', '/api/v1/download/stop'],
+      ['POST', '/api/v1/download/stop'],
+      ['POST', '/api/v1/transfer/queue/page'],
       ['POST', '/api/v1/system/runscheduler'],
       ['DELETE', '/api/v1/subscribe/1'],
+      ['DELETE', '/api/v1/transfer/queue'],
+      ['DELETE', '/api/v1/download/1'],
     ];
     for (const [method, apiPath] of forbidden) {
       expect(() => assertMoviepilotRequestAllowed(method, apiPath)).toThrow(MoviepilotClientError);
@@ -97,6 +106,122 @@ describe('MoviePilot v3 白名单与字段容错/敏感字段剥离', () => {
     expect(data.downloads[0]?.progress).toBe(45);
     expect(data.subscribes[0]?.lackEpisode).toBeNull();
   });
+
+  it('解析 activeDownloads 与 transferQueue（仅返回文件 basename、统计状态计数、支持 limit 截断）', () => {
+    const data = buildMoviepilotSummaryData({
+      subscribes: [],
+      transfers: [],
+      downloads: [
+        {
+          hash: 'h1',
+          title: '剧集 A',
+          name: 'Show.A.S01E01.1080p',
+          year: '2025',
+          season_episode: 'S01E01',
+          downloader: 'qB 下载',
+          size: 4096,
+          progress: 62.5,
+          state: 'downloading',
+          dlspeed: '15.2 MB/s',
+          upspeed: '1.1 MB/s',
+          category: '欧美剧',
+          site_name: '站点甲',
+        },
+        {
+          hash: 'h2',
+          title: '电影 B',
+          name: 'Movie.B.2025',
+          progress: 20,
+          dlspeed: '3.0 MB/s',
+          upspeed: '0 B/s',
+        },
+      ],
+      transferQueue: {
+        items: [
+          {
+            media: {
+              title: '示例剧集',
+              title_year: '示例剧集 (2025)',
+              year: '2025',
+              poster_path: '/secret/poster.jpg',
+            },
+            season: 2,
+            tasks: [
+              {
+                fileitem: {
+                  name: '',
+                  path: '/volume1/media/downloads/Show.S02E01.mkv',
+                  size: 1000,
+                },
+                state: 'running',
+              },
+              {
+                fileitem: {
+                  name: 'Show.S02E02.mkv',
+                  path: 'C:\\SecretDownloads\\Show.S02E02.mkv',
+                  size: 1000,
+                },
+                state: 'waiting',
+              },
+              {
+                fileitem: {
+                  path: '/volume1/media/downloads/Show.S02E03.mkv',
+                },
+                state: 'waiting',
+              },
+              {
+                fileitem: {
+                  path: '/volume1/media/downloads/Show.S02E04.mkv',
+                },
+                state: 'completed',
+              },
+            ],
+          },
+          {
+            media: { title: '第二项' },
+            season: 1,
+            tasks: [],
+          },
+        ],
+        total: 5,
+        page: 1,
+        count: 20,
+      },
+      sites: [],
+      siteStatistics: [],
+      downloader2: null,
+      activeLimit: 1,
+    });
+
+    expect(data.activeDownloadsTotal).toBe(2);
+    expect(data.activeDownloads).toHaveLength(1);
+    expect(data.activeDownloads[0]).toMatchObject({
+      hash: 'h1',
+      title: '剧集 A',
+      seasonEpisode: 'S01E01',
+      downloader: 'qB 下载',
+      progress: 62.5,
+      dlSpeedText: '15.2 MB/s',
+      upSpeedText: '1.1 MB/s',
+      siteName: '站点甲',
+    });
+
+    expect(data.transferQueue.available).toBe(true);
+    expect(data.transferQueueTotal).toBe(5);
+    expect(data.transferQueue.items).toHaveLength(1);
+    expect(data.transferQueue.items[0]).toEqual({
+      title: '示例剧集',
+      year: '2025',
+      season: 'S02',
+      taskCount: 4,
+      stateCounts: { running: 1, waiting: 2, completed: 1 },
+      sampleFiles: ['Show.S02E01.mkv', 'Show.S02E02.mkv', 'Show.S02E03.mkv'],
+    });
+    const serialized = JSON.stringify(data.transferQueue);
+    expect(serialized).not.toContain('/volume1/media/downloads');
+    expect(serialized).not.toContain('SecretDownloads');
+    expect(serialized).not.toContain('poster.jpg');
+  });
 });
 
 describe('MoviePilot API 集成（X-API-KEY、401 中文错误与模拟模式）', () => {
@@ -158,7 +283,49 @@ describe('MoviePilot API 集成（X-API-KEY、401 中文错误与模拟模式）
         );
       }
       if (parsed.pathname === '/api/v1/download/') {
-        return new Response(JSON.stringify([]), { status: 200 });
+        return new Response(
+          JSON.stringify([
+            {
+              hash: 'dl-1',
+              title: '示例下载',
+              name: 'Demo.Movie.2025',
+              season_episode: 'S01E01',
+              downloader: 'qBittorrent',
+              size: 1024,
+              progress: 55,
+              state: 'downloading',
+              dlspeed: '10.0 MB/s',
+              upspeed: '1.0 MB/s',
+              category: '电影',
+              site_name: '站点甲',
+            },
+          ]),
+          { status: 200 },
+        );
+      }
+      if (parsed.pathname === '/api/v1/transfer/queue/page') {
+        expect(parsed.searchParams.get('page')).toBe('1');
+        expect(parsed.searchParams.get('count')).toBe('20');
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                media: { title: '整理剧集', year: '2025' },
+                season: 1,
+                tasks: [
+                  {
+                    fileitem: { name: '', path: '/hidden/dir/Episode.01.mkv', size: 100 },
+                    state: 'waiting',
+                  },
+                ],
+              },
+            ],
+            total: 1,
+            page: 1,
+            count: 20,
+          }),
+          { status: 200 },
+        );
       }
       if (parsed.pathname === '/api/v1/site/') {
         return new Response(
@@ -205,9 +372,72 @@ describe('MoviePilot API 集成（X-API-KEY、401 中文错误与模拟模式）
     const body = JSON.parse(text) as MoviepilotSummaryResponse;
     expect(body.online).toBe(true);
     expect(body.data?.sites[0]?.domain).toBe('alpha.example.com');
+    expect(body.data?.activeDownloadsTotal).toBe(1);
+    expect(body.data?.transferQueue.available).toBe(true);
+    expect(body.data?.transferQueue.items[0]?.sampleFiles).toEqual(['Episode.01.mkv']);
+    expect(text).not.toContain('/hidden/dir');
     for (const p of requestedPaths) {
       expect(MOVIEPILOT_ALLOWED_GET_PATHS).toContain(p);
     }
+  });
+
+  it('当 /api/v1/transfer/queue/page 返回 404 时降级标记 unavailable 且不影响其它数据', async () => {
+    const config = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      MOVIEPILOT_URL: 'https://mp.example.com',
+      MOVIEPILOT_API_TOKEN: 'fake-mp-token',
+    });
+
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/v1/subscribe/list') {
+        return new Response(JSON.stringify([{ id: 1, name: '剧集 A', state: 'R' }]), {
+          status: 200,
+        });
+      }
+      if (parsed.pathname === '/api/v1/history/transfer') {
+        return new Response(JSON.stringify({ data: { list: [], total: 0 } }), { status: 200 });
+      }
+      if (parsed.pathname === '/api/v1/download/') {
+        return new Response(JSON.stringify([{ title: '正在下载项', progress: 40 }]), {
+          status: 200,
+        });
+      }
+      if (parsed.pathname === '/api/v1/transfer/queue/page') {
+        return new Response('Not Found', { status: 404 });
+      }
+      if (parsed.pathname === '/api/v1/site/' || parsed.pathname === '/api/v1/site/statistic') {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+      if (parsed.pathname === '/api/v1/dashboard/downloader2') {
+        return new Response(JSON.stringify({ download_speed: 100, upload_speed: 200 }), {
+          status: 200,
+        });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    const app = createApp(config, database.db, { fetchFn: fetchMock });
+    const cookie = await loginAdmin(app);
+    const res = await app.request('/api/moviepilot/summary', { headers: { Cookie: cookie } });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as MoviepilotSummaryResponse;
+    expect(body.online).toBe(true);
+    expect(body.data?.subscribes).toHaveLength(1);
+    expect(body.data?.activeDownloadsTotal).toBe(1);
+    expect(body.data?.transferQueue).toEqual({
+      available: false,
+      reason: '当前 MoviePilot 版本不支持整理队列',
+      items: [],
+      total: 0,
+    });
+    expect(body.data?.transferQueueTotal).toBe(0);
   });
 
   it('401 鉴权失败返回中文错误，MOVIEPILOT_MOCK=true 返回模拟数据', async () => {

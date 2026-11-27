@@ -78,6 +78,50 @@ describe('SeedingPage 多实例下载器页', () => {
             byCategory: [],
             problems: [],
             problemsTotal: 0,
+            activeTasks: [
+              {
+                name: 'Very.Long.Torrent.Name.For.Hover.Display.2025.2160p',
+                state: '下载中',
+                progress: 0.72,
+                dlSpeed: 8 * 1024 * 1024,
+                upSpeed: 1024 * 1024,
+                eta: 4800,
+                size: 20 * gib,
+                ratio: 0.2,
+                category: 'movies',
+              },
+              {
+                name: 'Second.Task.2025',
+                state: '元数据',
+                progress: 0,
+                dlSpeed: 0,
+                upSpeed: 0,
+                eta: null,
+                size: 10 * gib,
+                ratio: 0,
+              },
+              {
+                name: 'Third.Task.2025',
+                state: '做种中',
+                progress: 1,
+                dlSpeed: 0,
+                upSpeed: 2 * 1024 * 1024,
+                eta: null,
+                size: 15 * gib,
+                ratio: 2.1,
+              },
+              {
+                name: 'Fourth.Hidden.In.Card',
+                state: '等待',
+                progress: 0.1,
+                dlSpeed: 0,
+                upSpeed: 0,
+                eta: null,
+                size: 5 * gib,
+                ratio: 0,
+              },
+            ],
+            activeTotal: 5,
           },
           {
             id: 'tr-seed',
@@ -96,6 +140,8 @@ describe('SeedingPage 多实例下载器页', () => {
             byLabel: [],
             problems: [],
             problemsTotal: 0,
+            activeTasks: [],
+            activeTotal: 0,
           },
         ],
       }),
@@ -121,7 +167,25 @@ describe('SeedingPage 多实例下载器页', () => {
 
     const detailLinks = screen.getAllByRole('link');
     expect(detailLinks[0]).toHaveAttribute('href', '/seeding/qb-dl');
-    expect(detailLinks[1]).toHaveAttribute('href', '/seeding/tr-seed');
+    expect(detailLinks[1]).toHaveAttribute('href', '/seeding/qb-dl');
+    expect(detailLinks[2]).toHaveAttribute('href', '/seeding/tr-seed');
+
+    // 前 3 条活跃任务、截断悬停全名、剩余时间、状态徽章、“还有 N 个”与空状态
+    const hoveredTitle = screen.getByText('Very.Long.Torrent.Name.For.Hover.Display.2025.2160p');
+    expect(hoveredTitle).toHaveAttribute(
+      'title',
+      'Very.Long.Torrent.Name.For.Hover.Display.2025.2160p',
+    );
+    expect(screen.getByText('下载中')).toBeInTheDocument();
+    expect(screen.getByText('元数据')).toBeInTheDocument();
+    expect(screen.getByText('做种中')).toBeInTheDocument();
+    expect(screen.getByText('剩余 约 1 小时 20 分')).toBeInTheDocument();
+    expect(screen.queryByText('Fourth.Hidden.In.Card')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '还有 2 个' })).toHaveAttribute(
+      'href',
+      '/seeding/qb-dl',
+    );
+    expect(screen.getByText('暂无进行中的任务')).toBeInTheDocument();
 
     expect(screen.queryByRole('button', { name: /暂停|恢复|删除|添加/ })).not.toBeInTheDocument();
   });

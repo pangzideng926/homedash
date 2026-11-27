@@ -374,7 +374,20 @@ export function createApp(
     const id = c.req.param('id');
     const refreshParam = c.req.query('refresh');
     const refresh = refreshParam === '1' || refreshParam === 'true';
-    const result = await downloadersService.getInstanceSummary(id, { refresh });
+    const activeLimitRaw = c.req.query('activeLimit');
+    let activeLimit: number | undefined;
+    if (activeLimitRaw !== undefined && activeLimitRaw.trim() !== '') {
+      const trimmed = activeLimitRaw.trim();
+      if (!/^\d+$/.test(trimmed)) {
+        return c.json({ error: 'activeLimit 参数必须是 1 到 100 之间的整数' }, 400);
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) {
+        return c.json({ error: 'activeLimit 参数必须是 1 到 100 之间的整数' }, 400);
+      }
+      activeLimit = parsed;
+    }
+    const result = await downloadersService.getInstanceSummary(id, { refresh, activeLimit });
     if (!result.found) {
       return c.json({ error: '未找到指定下载器实例' }, 404);
     }
