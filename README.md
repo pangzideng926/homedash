@@ -37,7 +37,15 @@ homedash/
 │   ├── drizzle.config.ts      # Drizzle Kit 配置
 │   └── package.json
 ├── web/                       # React + Vite 前端应用
-│   ├── src/                   # 前端源码（页面、布局、鉴权上下文、UI 组件）
+│   ├── src/                   # 前端源码
+│   │   ├── shell/             # 通用后台骨架（布局、导航树、主题、鉴权与路由，与业务解耦）
+│   │   ├── components/
+│   │   │   ├── common/        # 通用业务无关 UI 组件（DataCard、StatusBadge 等）
+│   │   │   └── ui/            # shadcn/ui 基础组件
+│   │   ├── config/            # 菜单与路由集中配置（navigation.ts）
+│   │   ├── hooks/             # 通用请求 Hook（useApi）
+│   │   ├── lib/               # 统一 API 封装（api.ts）与样式工具
+│   │   └── pages/             # 各业务模块页面与登录、设置、404 页面
 │   ├── components.json        # shadcn/ui 配置
 │   ├── vite.config.ts         # Vite 与 /api 开发代理配置
 │   └── package.json
@@ -159,7 +167,62 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 
 ### 设置状态接口与状态页
 
-- 已登录状态下可调用受保护接口 `GET /api/settings/status` 查看各模块配置状态（`已配置` / `未配置` / `配置不完整`）以及各键是否已填写（布尔值），响应体**绝不包含任何真实配置值或密钥**，供后续“设置状态页”展示与排查缺失配置使用。
+- 已登录状态下可调用受保护接口 `GET /api/settings/status` 查看各模块配置状态（`已配置` / `未配置` / `配置不完整`）以及各键是否已填写（布尔值），响应体**绝不包含任何真实配置值或密钥**；前端 `/settings` 页面会按模块卡片展示状态，支持加载骨架屏、错误提示与重试。
+
+## 后台骨架
+
+前端采用“骨架与业务解耦”的目录分层，可直接作为通用后台模板复用：
+
+- **`web/src/shell/`**：通用后台骨架（`ShellRouter`、`AdminLayout`、`Sidebar`、`Topbar`、`Breadcrumbs`、`ThemeProvider`、`ThemeToggle`、`AuthProvider`、`ProtectedRoute` 及路由树工具），不依赖任何具体业务模块。
+- **`web/src/components/common/`**：通用状态与数据展示组件。
+- **`web/src/config/navigation.ts`**：单一菜单与路由配置源（`NAV_ROUTES`），同时驱动侧栏菜单（支持嵌套分组）、懒加载路由表、面包屑与页面标题（`页标题 - homedash`）。
+- **`web/src/lib/api.ts` 与 `web/src/hooks/useApi.ts`**：统一请求封装（自动 JSON 解析、统一 `ApiError` 中文错误、401 自动清空登录态并跳转 `/login?redirect=...`、429 显示后端限流提示、`expiresAt` 会话过期检测）。
+- **主题与响应式布局**：支持亮色 / 暗色 / 跟随系统三档切换（`localStorage` 持久化并在 `web/index.html` 提前写入 `dark` 类避免首屏闪烁）；桌面端支持侧栏折叠成图标栏并持久化，窄屏下切换为抽屉导航。
+
+### 如何新增一个模块页面
+
+新增页面只需两步，**无需修改 `web/src/shell/` 或任何布局代码**：
+
+1. 在 `web/src/pages/` 下创建页面组件（例如 `StoragePage.tsx`），提供默认导出以支持路由懒加载：
+
+   ```tsx
+   import { PageHeader, EmptyState } from '@/components/common';
+
+   export default function StoragePage() {
+     return (
+       <div className="space-y-6">
+         <PageHeader title="存储管理" description="查看存储池与磁盘详情" />
+         <EmptyState title="即将上线" description="功能建设中" />
+       </div>
+     );
+   }
+   ```
+
+2. 在 `web/src/config/navigation.ts` 的 `NAV_ROUTES`（或对应分组的 `children`）中添加一项配置：
+
+   ```ts
+   {
+     id: 'storage',
+     path: '/storage',
+     title: '存储管理',
+     description: '查看存储池与磁盘详情',
+     icon: HardDrive, // 来自 lucide-react
+     component: lazy(() => import('@/pages/StoragePage')),
+   }
+   ```
+
+   添加后侧栏菜单、受保护路由、顶栏面包屑和浏览器标题会自动同步生成。
+
+### 通用组件列表
+
+| 组件           | 路径                                         | 用途与主要属性                                                                                                                  |
+| -------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `DataCard`     | `web/src/components/common/DataCard.tsx`     | 指标/概览卡片：`title`、`value`、`description`、`icon`、`status`、`statusLabel`                                                 |
+| `StatusBadge`  | `web/src/components/common/StatusBadge.tsx`  | 状态徽章：`status`（`success`/`configured`/`warning`/`incomplete`/`error`/`unknown`/`unconfigured`/`info`）、`label`、`showDot` |
+| `EmptyState`   | `web/src/components/common/EmptyState.tsx`   | 空状态/占位提示：`title`、`description`、`icon`、`action`                                                                       |
+| `LoadingState` | `web/src/components/common/LoadingState.tsx` | 加载态/骨架屏：`variant`（`spinner`/`skeleton`）、`rows`、`message`                                                             |
+| `ErrorState`   | `web/src/components/common/ErrorState.tsx`   | 错误态与重试：`title`、`message`、`onRetry`、`retryLabel`                                                                       |
+| `PageHeader`   | `web/src/components/common/PageHeader.tsx`   | 页面标题栏：`title`、`description`、`actions`                                                                                   |
 
 ### 密钥扫描
 

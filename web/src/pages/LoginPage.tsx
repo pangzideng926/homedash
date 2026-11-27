@@ -1,32 +1,26 @@
 import { useState, type FormEvent } from 'react';
 import { ServerCog } from 'lucide-react';
-import { Navigate, useLocation, useNavigate } from 'react-router';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useAuth } from '@/contexts/auth-context';
 import { ApiError } from '@/lib/api';
-
-interface LocationState {
-  from?: {
-    pathname?: string;
-  };
-}
+import { ThemeToggle, getSafeRedirectPath, useAuth } from '@/shell';
 
 export function LoginPage() {
-  const { status, signIn } = useAuth();
+  const { status, sessionExpired, signIn, clearSessionExpired } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const state = location.state as LocationState | null;
-  const redirectTarget =
-    state?.from?.pathname && state.from.pathname !== '/login' ? state.from.pathname : '/';
+  const redirectTarget = getSafeRedirectPath(searchParams.get('redirect'));
+  const isExpiredNotice =
+    !errorMessage && (searchParams.get('reason') === 'expired' || sessionExpired);
 
   if (status === 'authenticated') {
     return <Navigate to={redirectTarget} replace />;
@@ -35,9 +29,10 @@ export function LoginPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
+    clearSessionExpired();
 
     if (!username.trim() || !password) {
-      setErrorMessage('用户名或密码错误');
+      setErrorMessage('请输入用户名和密码');
       return;
     }
 
@@ -57,11 +52,15 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-muted/40 p-4">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
+
       <Card className="w-full max-w-sm">
         <CardHeader className="space-y-3 text-center">
           <div className="mx-auto flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs">
-            <ServerCog className="size-5" />
+            <ServerCog className="size-5" aria-hidden="true" />
           </div>
           <div className="space-y-1">
             <CardTitle className="text-xl">登录控制台</CardTitle>
@@ -71,6 +70,15 @@ export function LoginPage() {
 
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {isExpiredNotice ? (
+              <div
+                role="status"
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+              >
+                登录已过期，请重新登录
+              </div>
+            ) : null}
+
             <div className="space-y-2">
               <Label htmlFor="username">用户名</Label>
               <Input
@@ -117,3 +125,5 @@ export function LoginPage() {
     </div>
   );
 }
+
+export default LoginPage;

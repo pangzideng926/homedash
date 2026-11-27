@@ -1,26 +1,23 @@
 import { Clock } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { EmptyState, PageHeader } from '@/components/common';
 
-interface ComingSoonPageProps {
+export interface ComingSoonPageProps {
   title: string;
   description: string;
 }
 
 export function ComingSoonPage({ title, description }: ComingSoonPageProps) {
   return (
-    <Card className="max-w-xl">
-      <CardHeader>
-        <div className="mb-2 flex size-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-          <Clock className="size-5" />
-        </div>
-        <CardTitle className="text-lg">{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-          即将上线
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <PageHeader title={title} description={description} />
+      <EmptyState
+        icon={Clock}
+        title="即将上线"
+        description="该功能模块正在建设中，敬请期待。"
+        className="max-w-2xl"
+      />
+    </div>
   );
 }
+
+export default ComingSoonPage;
