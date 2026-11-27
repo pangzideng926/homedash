@@ -6,9 +6,13 @@ import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
 import { parseConfig } from '../src/config/index.js';
 import { createDatabase, type DatabaseConnection } from '../src/db/index.js';
+import { SshCollectorError } from '../src/devices/ssh-executor.js';
 import {
+  buildDockerActionCommand,
+  DOCKER_ACTION_TIMEOUT_MESSAGE,
   DOCKER_LIST_NAMES_COMMAND,
   parseNasDockerOutput,
+  resolveDockerStopTimeoutSeconds,
   type DockerAuditResponse,
   type DockerLogsResponse,
   type NasStatusResponse,
@@ -303,8 +307,8 @@ describe('Docker stats 合并解析与受限操作/审计日志', () => {
       headers: { Cookie: cookie },
     });
 
-    expect(executedCommands).toContain("docker stop -- 'qbittorrent'");
-    expect(executedCommands).toContain("docker restart -- 'qbittorrent'");
+    expect(executedCommands).toContain("docker stop -t 30 -- 'qbittorrent'");
+    expect(executedCommands).toContain("docker restart -t 30 -- 'qbittorrent'");
     expect(executedCommands).toContain("docker start -- 'qbittorrent'");
 
     // 4. 操作后缓存已清除，再次请求 /api/nas/status 应重新采集（cached: false）
@@ -330,5 +334,210 @@ describe('Docker stats 合并解析与受限操作/审计日志', () => {
       action: 'stop',
       result: 'success',
     });
+  });
+
+  it('命令模板根据 DOCKER_ACTION_TIMEOUT_MS 计算 stop/restart 等待秒数并保留名称白名单', () => {
+    expect(resolveDockerStopTimeoutSeconds(60000)).toBe(30);
+    expect(resolveDockerStopTimeoutSeconds(35000)).toBe(30);
+    expect(resolveDockerStopTimeoutSeconds(34999)).toBe(29);
+    expect(resolveDockerStopTimeoutSeconds(20000)).toBe(15);
+    expect(resolveDockerStopTimeoutSeconds(8000)).toBe(3);
+    expect(resolveDockerStopTimeoutSeconds(5000)).toBe(1);
+
+    expect(buildDockerActionCommand('start', 'qbittorrent')).toBe("docker start -- 'qbittorrent'");
+    expect(buildDockerActionCommand('stop', 'qbittorrent')).toBe(
+      "docker stop -t 30 -- 'qbittorrent'",
+    );
+    expect(buildDockerActionCommand('restart', 'qbittorrent')).toBe(
+      "docker restart -t 30 -- 'qbittorrent'",
+    );
+    expect(buildDockerActionCommand('stop', 'qbittorrent', 20000)).toBe(
+      "docker stop -t 15 -- 'qbittorrent'",
+    );
+    expect(buildDockerActionCommand('restart', 'qbittorrent', 5000)).toBe(
+      "docker restart -t 1 -- 'qbittorrent'",
+    );
+    expect(buildDockerActionCommand('start', 'qbittorrent', 5000)).toBe(
+      "docker start -- 'qbittorrent'",
+    );
+
+    expect(() => buildDockerActionCommand('stop', 'bad;name')).toThrow('容器名称格式无效');
+  });
+
+  it('操作命令使用 DOCKER_ACTION_TIMEOUT_MS，而 docker ps -a 与日志读取仍使用原超时', async () => {
+    const calls: Array<{ command: string; timeoutMs: number }> = [];
+    const sshExecutor = vi
+      .fn()
+      .mockImplementation(async (params: { command: string; timeoutMs: number }) => {
+        calls.push({ command: params.command, timeoutMs: params.timeoutMs });
+        if (params.command === DOCKER_LIST_NAMES_COMMAND) {
+          return { code: 0, stdout: 'homedash\nqbittorrent\n', stderr: '' };
+        }
+        if (params.command.startsWith('docker logs ')) {
+          return { code: 0, stdout: '2026-11-27T08:00:00Z ok\n', stderr: '' };
+        }
+        return { code: 0, stdout: 'qbittorrent\n', stderr: '' };
+      });
+
+    const config = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      NAS_SSH_HOST: '192.0.2.10',
+      NAS_SSH_PORT: '22',
+      NAS_SSH_USER: 'demo',
+      NAS_SSH_KEY_PATH: './secrets/test-nas-key',
+      DEVICES_MOCK: 'true',
+      DEVICE_SSH_TIMEOUT_MS: '8500',
+      DOCKER_ACTIONS_ENABLED: 'true',
+      DOCKER_ACTION_TIMEOUT_MS: '90000',
+      DOCKER_AUDIT_FILE: auditFile,
+    });
+
+    const app = createApp(config, database.db, {
+      sshExecutor,
+      readPrivateKey: vi.fn().mockResolvedValue('fake-key'),
+    });
+    const cookie = await loginCookie(app);
+
+    const stopRes = await app.request('/api/nas/docker/qbittorrent/stop', {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    expect(stopRes.status).toBe(200);
+
+    const logsRes = await app.request('/api/nas/docker/qbittorrent/logs?tail=50', {
+      headers: { Cookie: cookie },
+    });
+    expect(logsRes.status).toBe(200);
+
+    expect(calls).toEqual([
+      { command: DOCKER_LIST_NAMES_COMMAND, timeoutMs: 8500 },
+      { command: "docker stop -t 30 -- 'qbittorrent'", timeoutMs: 90000 },
+      { command: DOCKER_LIST_NAMES_COMMAND, timeoutMs: 8500 },
+      { command: "docker logs --tail 50 --timestamps -- 'qbittorrent'", timeoutMs: 8500 },
+    ]);
+
+    // 配置值 < 35000 时，操作命令等待秒数收敛为 max(1, floor(超时/1000) - 5)
+    calls.length = 0;
+    const shortConfig = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      NAS_SSH_HOST: '192.0.2.10',
+      NAS_SSH_PORT: '22',
+      NAS_SSH_USER: 'demo',
+      NAS_SSH_KEY_PATH: './secrets/test-nas-key',
+      DOCKER_ACTIONS_ENABLED: 'true',
+      DOCKER_ACTION_TIMEOUT_MS: '20000',
+      DOCKER_AUDIT_FILE: auditFile,
+    });
+    const shortApp = createApp(shortConfig, database.db, {
+      sshExecutor,
+      readPrivateKey: vi.fn().mockResolvedValue('fake-key'),
+    });
+    const shortCookie = await loginCookie(shortApp);
+
+    const shortStopRes = await shortApp.request('/api/nas/docker/qbittorrent/stop', {
+      method: 'POST',
+      headers: { Cookie: shortCookie },
+    });
+    expect(shortStopRes.status).toBe(200);
+    expect(calls).toEqual([
+      { command: DOCKER_LIST_NAMES_COMMAND, timeoutMs: 8000 },
+      { command: "docker stop -t 15 -- 'qbittorrent'", timeoutMs: 20000 },
+    ]);
+  });
+
+  it('操作命令超时返回 504、审计记录 failed 并注明 timeout、且清除 NAS 状态缓存；ps 超时仍返回 502', async () => {
+    let psShouldTimeout = false;
+    const sshExecutor = vi.fn().mockImplementation(async (params: { command: string }) => {
+      if (params.command === DOCKER_LIST_NAMES_COMMAND) {
+        if (psShouldTimeout) {
+          throw new SshCollectorError('TIMEOUT', 'SSH 连接或命令执行超时');
+        }
+        return { code: 0, stdout: 'homedash\nqbittorrent\n', stderr: '' };
+      }
+      if (params.command.includes('/bin/sh -c')) {
+        return { code: 0, stdout: SAMPLE_NAS_WITH_DOCKER_STATS, stderr: '' };
+      }
+      if (params.command.startsWith('docker stop ')) {
+        throw new SshCollectorError('TIMEOUT', 'SSH 连接或命令执行超时');
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    });
+
+    const config = parseConfig({
+      NODE_ENV: 'test',
+      ADMIN_USERNAME: TEST_USERNAME,
+      ADMIN_PASSWORD_HASH: passwordHash,
+      SESSION_SECRET: TEST_SESSION_SECRET,
+      DATABASE_URL: ':memory:',
+      NAS_SSH_HOST: '192.0.2.10',
+      NAS_SSH_PORT: '22',
+      NAS_SSH_USER: 'demo',
+      NAS_SSH_KEY_PATH: './secrets/test-nas-key',
+      NAS_CACHE_SECONDS: '60',
+      DOCKER_ACTIONS_ENABLED: 'true',
+      DOCKER_AUDIT_FILE: auditFile,
+    });
+
+    const app = createApp(config, database.db, {
+      sshExecutor,
+      readPrivateKey: vi.fn().mockResolvedValue('fake-key'),
+    });
+    const cookie = await loginCookie(app);
+
+    // 1. 先写入 NAS 状态缓存并确认命中缓存
+    const status1 = (await (
+      await app.request('/api/nas/status', { headers: { Cookie: cookie } })
+    ).json()) as NasStatusResponse;
+    expect(status1.cached).toBe(false);
+
+    const status2 = (await (
+      await app.request('/api/nas/status', { headers: { Cookie: cookie } })
+    ).json()) as NasStatusResponse;
+    expect(status2.cached).toBe(true);
+
+    // 2. 容器 stop 操作命令超时 -> 504
+    const timeoutRes = await app.request('/api/nas/docker/qbittorrent/stop', {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    expect(timeoutRes.status).toBe(504);
+    expect(await timeoutRes.json()).toEqual({ error: DOCKER_ACTION_TIMEOUT_MESSAGE });
+
+    // 3. NAS 状态缓存已被清除
+    const status3 = (await (
+      await app.request('/api/nas/status', { headers: { Cookie: cookie } })
+    ).json()) as NasStatusResponse;
+    expect(status3.cached).toBe(false);
+
+    // 4. 审计日志记录为 failed 且注明 timeout
+    const auditRes = await app.request('/api/nas/docker/audit?limit=10', {
+      headers: { Cookie: cookie },
+    });
+    expect(auditRes.status).toBe(200);
+    const auditBody = (await auditRes.json()) as DockerAuditResponse;
+    expect(auditBody.entries[0]).toMatchObject({
+      username: TEST_USERNAME,
+      container: 'qbittorrent',
+      action: 'stop',
+      result: 'failed',
+    });
+    expect(auditBody.entries[0]?.error).toContain('timeout');
+    expect(auditBody.entries[0]?.error).toContain(DOCKER_ACTION_TIMEOUT_MESSAGE);
+
+    // 5. 操作前 docker ps -a 超时仍返回 502（未发出操作命令）
+    psShouldTimeout = true;
+    const psTimeoutRes = await app.request('/api/nas/docker/qbittorrent/start', {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    expect(psTimeoutRes.status).toBe(502);
   });
 });

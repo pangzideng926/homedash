@@ -802,10 +802,25 @@ export async function executeNasDockerAction(
   name: string,
   action: DockerAction,
 ): Promise<DockerActionResponse> {
-  return apiRequest<DockerActionResponse>(`/api/nas/docker/${encodeURIComponent(name)}/${action}`, {
-    method: 'POST',
-    fallbackErrorMessage: '执行容器操作失败，请稍后重试',
-  });
+  try {
+    return await apiRequest<DockerActionResponse>(
+      `/api/nas/docker/${encodeURIComponent(name)}/${action}`,
+      {
+        method: 'POST',
+        fallbackErrorMessage: '执行容器操作失败，请稍后重试',
+      },
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 504) {
+      throw new ApiError(
+        error.message && error.message !== '服务器内部错误，请稍后重试'
+          ? error.message
+          : '操作已发出但等待超时，请稍后刷新查看容器状态',
+        504,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function fetchNasDockerLogs(

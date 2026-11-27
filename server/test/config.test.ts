@@ -226,6 +226,7 @@ describe('配置分组校验与状态报告', () => {
       DOCKER_ACTIONS_ENABLED: false,
       DOCKER_PROTECTED_CONTAINERS: false,
       DOCKER_AUDIT_FILE: false,
+      DOCKER_ACTION_TIMEOUT_MS: false,
     });
     expect(partialStatus.modules.qbittorrent.status).toBe('incomplete');
     expect(partialStatus.modules.qbittorrent.keys.QBIT_PASSWORD).toBe(true);
@@ -289,9 +290,37 @@ describe('配置分组校验与状态报告', () => {
     expect(cfg.nas?.DOCKER_ACTIONS_ENABLED).toBe(true);
     expect(cfg.nas?.DOCKER_PROTECTED_CONTAINERS).toEqual(['homedash', 'postgres', 'redis']);
     expect(cfg.nas?.DOCKER_AUDIT_FILE).toBe('./data/custom-docker-audit.log');
+    expect(cfg.nas?.DOCKER_ACTION_TIMEOUT_MS).toBe(60000);
 
     const status = getConfigStatus(cfg);
     expect(status.modules.downloaders.status).toBe('configured');
+    expect(status.modules.nas.keys.DOCKER_ACTION_TIMEOUT_MS).toBe(false);
+  });
+
+  it('校验 DOCKER_ACTION_TIMEOUT_MS 默认值 60000 与整数范围 5000..300000', () => {
+    for (const validValue of ['5000', '20000', '60000', '300000']) {
+      const cfg = parseConfig({
+        ...BASE_ENV,
+        DOCKER_ACTION_TIMEOUT_MS: validValue,
+      });
+      expect(cfg.nas?.DOCKER_ACTION_TIMEOUT_MS).toBe(Number(validValue));
+      const status = getConfigStatus(cfg);
+      expect(status.modules.nas.keys.DOCKER_ACTION_TIMEOUT_MS).toBe(true);
+    }
+
+    for (const invalidValue of ['4999', '300001', '0', '-1000', '10000.5', 'abc']) {
+      let caughtError: unknown;
+      try {
+        parseConfig({
+          ...BASE_ENV,
+          DOCKER_ACTION_TIMEOUT_MS: invalidValue,
+        });
+      } catch (error) {
+        caughtError = error;
+      }
+      expect(caughtError).toBeInstanceOf(ConfigError);
+      expect(formatConfigError(caughtError as ConfigError)).toContain('DOCKER_ACTION_TIMEOUT_MS');
+    }
   });
 });
 

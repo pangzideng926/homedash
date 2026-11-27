@@ -146,6 +146,20 @@ const nonNegativeIntSchema = (label: string) =>
     )
     .transform((val) => Number(val));
 
+const intInRangeSchema = (label: string, min: number, max: number) =>
+  z
+    .string({ message: `${label}必须是 ${min} 到 ${max} 之间的整数` })
+    .trim()
+    .refine(
+      (val) => {
+        if (!/^\d+$/.test(val)) return false;
+        const num = Number(val);
+        return Number.isSafeInteger(num) && num >= min && num <= max;
+      },
+      { message: `${label}必须是 ${min} 到 ${max} 之间的整数` },
+    )
+    .transform((val) => Number(val));
+
 const timeZoneSchema = z
   .string({ message: '必须是有效的 IANA 时区名称（例如 Asia/Shanghai）' })
   .trim()
@@ -243,6 +257,7 @@ const nasFieldSchemas = {
       .filter(Boolean),
   ),
   DOCKER_AUDIT_FILE: nonEmptyStringSchema('Docker 操作审计日志路径'),
+  DOCKER_ACTION_TIMEOUT_MS: intInRangeSchema('Docker 操作命令超时时间（毫秒）', 5000, 300000),
 } as const;
 
 const downloadersFieldSchemas = {
@@ -647,6 +662,14 @@ function parseNasSection(
     './data/docker-audit.log',
     issues,
   );
+  const dockerActionTimeoutRes = parseSingleKey(
+    'nas',
+    'DOCKER_ACTION_TIMEOUT_MS',
+    nasFieldSchemas.DOCKER_ACTION_TIMEOUT_MS,
+    env.DOCKER_ACTION_TIMEOUT_MS,
+    60000,
+    issues,
+  );
 
   if (
     !hostRes.ok ||
@@ -657,7 +680,8 @@ function parseNasSection(
     !cacheRes.ok ||
     !dockerActionsRes.ok ||
     !dockerProtectedRes.ok ||
-    !dockerAuditRes.ok
+    !dockerAuditRes.ok ||
+    !dockerActionTimeoutRes.ok
   ) {
     return undefined;
   }
@@ -672,6 +696,7 @@ function parseNasSection(
     DOCKER_ACTIONS_ENABLED: dockerActionsRes.value,
     DOCKER_PROTECTED_CONTAINERS: dockerProtectedRes.value,
     DOCKER_AUDIT_FILE: dockerAuditRes.value,
+    DOCKER_ACTION_TIMEOUT_MS: dockerActionTimeoutRes.value,
   };
 }
 
