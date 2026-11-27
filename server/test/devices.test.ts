@@ -161,6 +161,17 @@ describe('只读脚本安全与多系统输出解析', () => {
     expect(decoded).toBe(WINDOWS_OS_PROBE_SCRIPT);
   });
 
+  it('Windows 采集脚本的 [math]::Max/Min 调用不使用整数字面量 0 作为首参，避免 Int32 重载溢出', () => {
+    expect(WINDOWS_READONLY_STATUS_SCRIPT).not.toContain('[math]::Max(0,');
+    expect(WINDOWS_READONLY_STATUS_SCRIPT).not.toMatch(/\[math\]::(?:Max|Min)\(\s*0\s*,/i);
+    expect(WINDOWS_READONLY_STATUS_SCRIPT).toContain(
+      '$usedMem = [math]::Max([int64]0, [int64]($totalMem - $freeMem))',
+    );
+    expect(WINDOWS_READONLY_STATUS_SCRIPT).toContain(
+      '$uptimeSeconds = [int64][math]::Max([double]0,',
+    );
+  });
+
   it('正确解析 Windows 输出为统一结构', () => {
     const data = parseWindowsDeviceOutput(`\uFEFF${SAMPLE_WINDOWS_STDOUT}`);
     expect(data.hostname).toBe('DEMO-WIN');
