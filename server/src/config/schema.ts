@@ -15,6 +15,7 @@ import {
   type ConfigModuleName,
   type DevicesSectionConfig,
   type DownloadersSectionConfig,
+  type MediaSectionConfig,
   type MoviepilotSectionConfig,
   type NasSectionConfig,
   type QbittorrentSectionConfig,
@@ -283,6 +284,27 @@ const moviepilotFieldSchemas = {
   MOVIEPILOT_CACHE_SECONDS: nonNegativeIntSchema('MoviePilot 状态缓存时间（秒）'),
   MOVIEPILOT_TIMEOUT_MS: positiveIntSchema('MoviePilot 请求超时时间（毫秒）'),
   MOVIEPILOT_ACTIVE_LIMIT: intInRangeSchema('MoviePilot 活跃任务条数上限', 1, 100),
+} as const;
+
+const IMAGE_HOST_RULE_REGEX = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+const mediaImageHostsSchema = z
+  .string()
+  .transform((val) =>
+    val
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  .refine((hosts) => hosts.every((host) => IMAGE_HOST_RULE_REGEX.test(host)), {
+    message: '必须是逗号分隔的合法域名列表（支持 *.domain.com 通配前缀，不能包含协议或路径）',
+  });
+
+const mediaFieldSchemas = {
+  MEDIA_CACHE_SECONDS: nonNegativeIntSchema('影视模块缓存时间（秒）'),
+  MEDIA_IMAGE_HOSTS: mediaImageHostsSchema,
+  MEDIA_IMAGE_CACHE_DIR: nonEmptyStringSchema('海报磁盘缓存目录'),
+  MEDIA_IMAGE_CACHE_MAX: intInRangeSchema('海报内存缓存上限', 0, 10000),
 } as const;
 
 const windowsSshEnvSchema = z.object({
@@ -925,6 +947,60 @@ function parseMoviepilotSection(
   };
 }
 
+function parseMediaSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): MediaSectionConfig | undefined {
+  const anyFilled = CONFIG_MODULE_KEYS.media.some((key) => isEnvValueFilled(env[key]));
+  if (!anyFilled) {
+    return undefined;
+  }
+
+  const cacheRes = parseSingleKey(
+    'media',
+    'MEDIA_CACHE_SECONDS',
+    mediaFieldSchemas.MEDIA_CACHE_SECONDS,
+    env.MEDIA_CACHE_SECONDS,
+    30,
+    issues,
+  );
+  const hostsRes = parseSingleKey(
+    'media',
+    'MEDIA_IMAGE_HOSTS',
+    mediaFieldSchemas.MEDIA_IMAGE_HOSTS,
+    env.MEDIA_IMAGE_HOSTS,
+    [] as string[],
+    issues,
+  );
+  const cacheDirRes = parseSingleKey(
+    'media',
+    'MEDIA_IMAGE_CACHE_DIR',
+    mediaFieldSchemas.MEDIA_IMAGE_CACHE_DIR,
+    env.MEDIA_IMAGE_CACHE_DIR,
+    './data/image-cache',
+    issues,
+  );
+  const cacheMaxRes = parseSingleKey(
+    'media',
+    'MEDIA_IMAGE_CACHE_MAX',
+    mediaFieldSchemas.MEDIA_IMAGE_CACHE_MAX,
+    env.MEDIA_IMAGE_CACHE_MAX,
+    200,
+    issues,
+  );
+
+  if (!cacheRes.ok || !hostsRes.ok || !cacheDirRes.ok || !cacheMaxRes.ok) {
+    return undefined;
+  }
+
+  return {
+    MEDIA_CACHE_SECONDS: cacheRes.value,
+    MEDIA_IMAGE_HOSTS: hostsRes.value,
+    MEDIA_IMAGE_CACHE_DIR: cacheDirRes.value,
+    MEDIA_IMAGE_CACHE_MAX: cacheMaxRes.value,
+  };
+}
+
 function buildKeyPresence(env: Record<string, string | undefined>): Record<ConfigKey, boolean> {
   const presence = {} as Record<ConfigKey, boolean>;
   for (const key of ALL_CONFIG_KEYS) {
@@ -953,6 +1029,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
   const downloaders = parseDownloadersSection(env, issues);
   const qbittorrent = parseQbittorrentSection(env, issues);
   const moviepilot = parseMoviepilotSection(env, issues);
+  const media = parseMediaSection(env, issues);
   const devices = parseDevicesSection(env, issues);
   const windows = parseWindowsSection(env, issues);
   const vps = parseVpsSection(env, issues);
@@ -998,6 +1075,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     downloaders,
     qbittorrent,
     moviepilot,
+    media,
     devices,
     windows,
     vps,

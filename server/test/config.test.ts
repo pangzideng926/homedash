@@ -355,6 +355,53 @@ describe('配置分组校验与状态报告', () => {
       ).toThrow(ConfigError);
     }
   });
+
+  it('校验 media 模块配置项默认值、非法主机白名单拦截与 getConfigStatus', () => {
+    const cfg = parseConfig({
+      ...BASE_ENV,
+      MEDIA_CACHE_SECONDS: '45',
+      MEDIA_IMAGE_HOSTS: 'img.example.com, *.cdn.example.net ',
+      MEDIA_IMAGE_CACHE_DIR: './data/custom-img-cache',
+      MEDIA_IMAGE_CACHE_MAX: '500',
+    });
+
+    expect(cfg.media).toEqual({
+      MEDIA_CACHE_SECONDS: 45,
+      MEDIA_IMAGE_HOSTS: ['img.example.com', '*.cdn.example.net'],
+      MEDIA_IMAGE_CACHE_DIR: './data/custom-img-cache',
+      MEDIA_IMAGE_CACHE_MAX: 500,
+    });
+
+    const partialMedia = parseConfig({
+      ...BASE_ENV,
+      MEDIA_CACHE_SECONDS: '15',
+    });
+    expect(partialMedia.media).toEqual({
+      MEDIA_CACHE_SECONDS: 15,
+      MEDIA_IMAGE_HOSTS: [],
+      MEDIA_IMAGE_CACHE_DIR: './data/image-cache',
+      MEDIA_IMAGE_CACHE_MAX: 200,
+    });
+
+    expect(() =>
+      parseConfig({
+        ...BASE_ENV,
+        MEDIA_IMAGE_HOSTS: 'https://bad.example.com/path',
+      }),
+    ).toThrow(ConfigError);
+
+    expect(() =>
+      parseConfig({
+        ...BASE_ENV,
+        MEDIA_IMAGE_CACHE_MAX: '10001',
+      }),
+    ).toThrow(ConfigError);
+
+    const status = getConfigStatus(cfg, undefined, { media: true });
+    expect(status.modules.media.status).toBe('configured');
+    expect(status.modules.media.keys.MEDIA_CACHE_SECONDS).toBe(true);
+    expect(status.modules.media.keys.MEDIA_IMAGE_HOSTS).toBe(true);
+  });
 });
 
 describe('敏感键管理与日志脱敏工具', () => {

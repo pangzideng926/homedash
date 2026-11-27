@@ -6,9 +6,11 @@ import type { MoviepilotErrorCode } from './types.js';
  */
 export const MOVIEPILOT_ALLOWED_GET_PATHS = [
   '/api/v1/subscribe/list',
+  '/api/v1/subscribe/calendar',
   '/api/v1/history/transfer',
   '/api/v1/download/',
   '/api/v1/transfer/queue/page',
+  '/api/v1/dashboard/statistic',
   '/api/v1/site/',
   '/api/v1/site/statistic',
   '/api/v1/dashboard/downloader2',
@@ -48,8 +50,19 @@ export interface MoviepilotClientConfig {
   timeoutMs: number;
 }
 
+export interface MoviepilotCalendarParams {
+  start: string;
+  end: string;
+  page?: number;
+  count?: number;
+}
+
 export interface MoviepilotClient {
   getSubscribes: (cfg: MoviepilotClientConfig) => Promise<unknown>;
+  getSubscribeCalendar: (
+    cfg: MoviepilotClientConfig,
+    params: MoviepilotCalendarParams,
+  ) => Promise<unknown>;
   getTransferHistory: (
     cfg: MoviepilotClientConfig,
     page?: number,
@@ -61,6 +74,7 @@ export interface MoviepilotClient {
     page?: number,
     count?: number,
   ) => Promise<unknown>;
+  getDashboardStatistic: (cfg: MoviepilotClientConfig) => Promise<unknown>;
   getSites: (cfg: MoviepilotClientConfig) => Promise<unknown>;
   getSiteStatistics: (cfg: MoviepilotClientConfig) => Promise<unknown>;
   getDownloader2: (cfg: MoviepilotClientConfig) => Promise<unknown>;
@@ -86,6 +100,53 @@ function classifyFetchError(error: unknown): MoviepilotClientError {
     }
   }
   return new MoviepilotClientError('CONNECTION_FAILED', '无法连接到 MoviePilot，请检查地址与网络');
+}
+
+const DATE_KEY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MAX_CALENDAR_WINDOW_DAYS = 93;
+
+function parseDateKeyUtcMs(raw: string): number | null {
+  const match = DATE_KEY_PATTERN.exec(raw.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) {
+    return null;
+  }
+  return dt.getTime();
+}
+
+function validateCalendarParams(params: MoviepilotCalendarParams): {
+  start: string;
+  end: string;
+  page: number;
+  count: number;
+} {
+  const start = params.start.trim();
+  const end = params.end.trim();
+  const startMs = parseDateKeyUtcMs(start);
+  const endMs = parseDateKeyUtcMs(end);
+  if (startMs === null || endMs === null) {
+    throw new MoviepilotClientError('API_ERROR', '订阅日历起止日期必须为 YYYY-MM-DD 格式');
+  }
+  const diffDays = Math.round((endMs - startMs) / 86_400_000);
+  if (diffDays <= 0 || diffDays > MAX_CALENDAR_WINDOW_DAYS) {
+    throw new MoviepilotClientError(
+      'API_ERROR',
+      `订阅日历时间窗口必须在 1 到 ${MAX_CALENDAR_WINDOW_DAYS} 天之间`,
+    );
+  }
+  const page =
+    typeof params.page === 'number' && Number.isFinite(params.page) && params.page >= 1
+      ? Math.floor(params.page)
+      : 1;
+  const count =
+    typeof params.count === 'number' && Number.isFinite(params.count) && params.count >= 1
+      ? Math.min(200, Math.floor(params.count))
+      : 200;
+  return { start, end, page, count };
 }
 
 /**
@@ -148,11 +209,20 @@ export function createMoviepilotClient(fetchFn: typeof fetch = fetch): Moviepilo
 
   return {
     getSubscribes: (cfg) => requestGet(cfg, '/api/v1/subscribe/list'),
+    getSubscribeCalendar: async (cfg, params) => {
+      const validated = validateCalendarParams(params);
+      return requestGet(
+        cfg,
+        '/api/v1/subscribe/calendar',
+        `start=${validated.start}&end=${validated.end}&page=${validated.page}&count=${validated.count}`,
+      );
+    },
     getTransferHistory: (cfg, page = 1, count = 20) =>
       requestGet(cfg, '/api/v1/history/transfer', `page=${page}&count=${count}`),
     getDownloads: (cfg) => requestGet(cfg, '/api/v1/download/'),
     getTransferQueue: (cfg, page = 1, count = 20) =>
       requestGet(cfg, '/api/v1/transfer/queue/page', `page=${page}&count=${count}`),
+    getDashboardStatistic: (cfg) => requestGet(cfg, '/api/v1/dashboard/statistic'),
     getSites: (cfg) => requestGet(cfg, '/api/v1/site/'),
     getSiteStatistics: (cfg) => requestGet(cfg, '/api/v1/site/statistic'),
     getDownloader2: (cfg) => requestGet(cfg, '/api/v1/dashboard/downloader2'),

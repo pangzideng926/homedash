@@ -828,3 +828,52 @@ export function computeDownloadersTotals(
     counts,
   };
 }
+
+/**
+ * 生成模拟 qBittorrent 原始种子列表（用于影视模块在 DOWNLOADERS_MOCK=true 时的联调与测试）。
+ */
+export function createMockQbitTorrents(instanceId: string): Array<Record<string, unknown>> {
+  if (instanceId !== 'mock-qb-download') {
+    return [];
+  }
+  const gib = 1024 * 1024 * 1024;
+  const mib = 1024 * 1024;
+  return [
+    {
+      hash: 'demo-mp-dl-1',
+      name: 'Demo.Series.Alpha.S02E11.2160p.WEB-DL',
+      state: 'downloading',
+      progress: 0.725,
+      dlspeed: 12.5 * mib,
+      upspeed: 1.8 * mib,
+      eta: 360,
+      size: 6.4 * gib,
+      ratio: 0.18,
+      category: 'tv',
+    },
+    {
+      hash: 'demo-qb-unmatched-1',
+      name: '[ExamplePT].Demo.Movie.2025.2160p.UHD.BluRay.x265',
+      state: 'downloading',
+      progress: 0.41,
+      dlspeed: 4.2 * mib,
+      upspeed: 0.6 * mib,
+      eta: 1500,
+      size: 42.5 * gib,
+      ratio: 0.09,
+      category: 'movies',
+    },
+    {
+      hash: 'demo-qb-seeding-done-1',
+      name: 'Demo.Classic.Film.2020.1080p.BluRay-GroupD',
+      state: 'uploading',
+      progress: 1,
+      dlspeed: 0,
+      upspeed: 4.5 * mib,
+      eta: 8640000,
+      size: 16.0 * gib,
+      ratio: 2.35,
+      category: 'movies',
+    },
+  ];
+}

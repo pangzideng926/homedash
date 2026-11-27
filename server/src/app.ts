@@ -18,6 +18,11 @@ import {
   type NasTestOverride,
   type QbittorrentTestOverride,
 } from './integrations/index.js';
+import {
+  createMediaImageProxy,
+  createMediaService,
+  IMAGE_CACHE_CONTROL_HEADER,
+} from './media/index.js';
 import { createMoviepilotService } from './moviepilot/index.js';
 import { createNasDockerService, createNasService } from './nas/index.js';
 import { createQbittorrentService } from './qbittorrent/index.js';
@@ -92,6 +97,7 @@ export interface CreateAppOptions {
   readWindowsPrivateKey?: (keyPath: string) => Promise<string | Buffer>;
   fetchFn?: typeof fetch;
   logger?: SafeLogger;
+  mediaImageCacheDir?: string | null;
 }
 
 /**
@@ -149,6 +155,23 @@ export function createApp(
     now: getNow,
     logger: options?.logger,
   });
+  const mediaImageProxy = createMediaImageProxy(config, {
+    fetchFn: options?.fetchFn,
+    cacheDir: options?.mediaImageCacheDir,
+    getMpBaseUrl: () => integrationsStore.resolveMoviepilotConfig().url,
+    logger: options?.logger,
+  });
+  const mediaService = createMediaService(
+    config,
+    integrationsStore,
+    downloadersService,
+    mediaImageProxy,
+    {
+      fetchFn: options?.fetchFn,
+      now: getNow,
+      logger: options?.logger,
+    },
+  );
 
   app.use('/api/*', createAuthMiddleware(config, db, { now: getNow }));
 
@@ -230,6 +253,9 @@ export function createApp(
     return c.json(
       getConfigStatus(config, integrationsStore.getMergedKeyPresence(), {
         downloaders: integrationsStore.hasConfiguredDownloaders(),
+        media:
+          integrationsStore.resolveMoviepilotConfig().configured ||
+          integrationsStore.hasConfiguredDownloaders(),
       }),
     );
   });
@@ -262,8 +288,12 @@ export function createApp(
     if (moduleName === 'qbittorrent') {
       qbittorrentService.invalidateCache();
       downloadersService.invalidateCache();
+      mediaService.invalidateCache();
     }
-    if (moduleName === 'moviepilot') moviepilotService.invalidateCache();
+    if (moduleName === 'moviepilot') {
+      moviepilotService.invalidateCache();
+      mediaService.invalidateCache();
+    }
 
     return c.json(result.data);
   });
@@ -361,6 +391,7 @@ export function createApp(
 
     downloadersService.invalidateCache();
     qbittorrentService.invalidateCache();
+    mediaService.invalidateCache();
     return c.json(result.data);
   });
 
@@ -497,6 +528,40 @@ export function createApp(
     const refreshParam = c.req.query('refresh');
     const refresh = refreshParam === '1' || refreshParam === 'true';
     return c.json(await moviepilotService.getSummary({ refresh }));
+  });
+
+  app.get('/api/media/overview', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await mediaService.getOverview({ refresh }));
+  });
+
+  app.get('/api/media/downloads', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await mediaService.getDownloads({ refresh }));
+  });
+
+  app.get('/api/media/subscriptions', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await mediaService.getSubscriptions({ refresh }));
+  });
+
+  app.get('/api/media/image/:token', async (c) => {
+    const token = c.req.param('token');
+    const result = await mediaImageProxy.fetchImageByToken(token);
+    if (!result.ok) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return new Response(new Uint8Array(result.body), {
+      status: 200,
+      headers: {
+        'Content-Type': result.contentType,
+        'Cache-Control': IMAGE_CACHE_CONTROL_HEADER,
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
   });
 
   app.get('/api/vps', (c) => {

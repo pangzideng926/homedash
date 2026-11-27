@@ -6,6 +6,7 @@ import { createDatabase, type DatabaseConnection } from '../src/db/index.js';
 import {
   assertMoviepilotRequestAllowed,
   buildMoviepilotSummaryData,
+  createMoviepilotClient,
   MOVIEPILOT_ALLOWED_GET_PATHS,
   MoviepilotClientError,
   type MoviepilotSummaryResponse,
@@ -20,15 +21,21 @@ function extractCookiePair(setCookieHeader: string | null): string {
 }
 
 describe('MoviePilot v3 白名单与字段容错/敏感字段剥离', () => {
-  it('强制白名单仅放行 7 个只读 GET 接口，拦截任何写接口或站点测试接口', () => {
+  it('强制白名单仅放行 9 个只读 GET 接口，拦截 /api/v1/system/*、写接口或站点测试接口', async () => {
     expect(MOVIEPILOT_ALLOWED_GET_PATHS).toContain('/api/v1/transfer/queue/page');
-    expect(MOVIEPILOT_ALLOWED_GET_PATHS).toHaveLength(7);
+    expect(MOVIEPILOT_ALLOWED_GET_PATHS).toContain('/api/v1/subscribe/calendar');
+    expect(MOVIEPILOT_ALLOWED_GET_PATHS).toContain('/api/v1/dashboard/statistic');
+    expect(MOVIEPILOT_ALLOWED_GET_PATHS).toHaveLength(9);
 
     for (const allowed of MOVIEPILOT_ALLOWED_GET_PATHS) {
       expect(() => assertMoviepilotRequestAllowed('GET', allowed)).not.toThrow();
     }
 
     const forbidden: Array<[string, string]> = [
+      ['GET', '/api/v1/system/img'],
+      ['GET', '/api/v1/system/setting'],
+      ['GET', '/api/v1/system/env'],
+      ['POST', '/api/v1/system/runscheduler'],
       ['GET', '/api/v1/site/test/1'],
       ['GET', '/api/v1/transfer/now'],
       ['POST', '/api/v1/transfer/now'],
@@ -37,7 +44,7 @@ describe('MoviePilot v3 白名单与字段容错/敏感字段剥离', () => {
       ['GET', '/api/v1/download/stop'],
       ['POST', '/api/v1/download/stop'],
       ['POST', '/api/v1/transfer/queue/page'],
-      ['POST', '/api/v1/system/runscheduler'],
+      ['PUT', '/api/v1/subscribe/'],
       ['DELETE', '/api/v1/subscribe/1'],
       ['DELETE', '/api/v1/transfer/queue'],
       ['DELETE', '/api/v1/download/1'],
@@ -45,6 +52,25 @@ describe('MoviePilot v3 白名单与字段容错/敏感字段剥离', () => {
     for (const [method, apiPath] of forbidden) {
       expect(() => assertMoviepilotRequestAllowed(method, apiPath)).toThrow(MoviepilotClientError);
     }
+
+    const fetchMock = vi.fn<typeof fetch>(
+      async () => new Response('{"items":[]}', { status: 200 }),
+    );
+    const mpClient = createMoviepilotClient(fetchMock);
+    const cfg = { url: 'https://mp.example.com', apiToken: 'fake-token', timeoutMs: 3000 };
+
+    await expect(
+      mpClient.getSubscribeCalendar(cfg, { start: '2026-01-01', end: '2026-06-01' }),
+    ).rejects.toThrow(MoviepilotClientError);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await mpClient.getSubscribeCalendar(cfg, { start: '2026-11-13', end: '2027-01-27' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0]!;
+    expect(String(calledUrl)).toBe(
+      'https://mp.example.com/api/v1/subscribe/calendar?start=2026-11-13&end=2027-01-27&page=1&count=200',
+    );
+    expect(new Headers(calledInit?.headers).get('X-API-KEY')).toBe('fake-token');
   });
 
   it('严格剥离站点 cookie/ua/apikey/token/url 等敏感字段，且容忍字段缺失', () => {

@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MediaPage } from '@/pages/MediaPage';
@@ -10,113 +11,176 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-describe('MediaPage 影视页', () => {
+describe('MediaPage 影视模块三页签', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('渲染订阅列表、正在下载（前 5 条+总数）、整理队列（前 5 条+总数）、最近入库与站点状态表', async () => {
+  it('渲染总览页签统计条、最近入库海报墙与 warnings，并支持切换正在下载与订阅追剧页签', async () => {
+    const user = userEvent.setup();
+    const now = Date.now();
     const gib = 1024 * 1024 * 1024;
-    const activeDownloads = Array.from({ length: 6 }, (_, idx) => ({
-      hash: `dl-${idx}`,
-      title: idx === 0 ? '示例下载任务' : `示例下载任务 ${idx + 1}`,
-      name: `Demo.Download.${idx + 1}`,
-      year: '2025',
-      seasonEpisode: `S01E0${idx + 1}`,
-      downloader: 'qBittorrent',
-      size: 5 * gib,
-      progress: 65,
-      state: 'downloading',
-      dlSpeedText: '8.0 MiB/s',
-      upSpeedText: '1.0 MiB/s',
-      category: '电影',
-      siteName: '示例站点',
-      leftTime: '10 分钟',
-    }));
-    const queueItems = Array.from({ length: 6 }, (_, idx) => ({
-      title: `待整理剧集 ${idx + 1}`,
-      year: '2025',
-      season: `S0${idx + 1}`,
-      taskCount: 2,
-      stateCounts: { waiting: 1, running: 1 },
-      sampleFiles: [`Episode.${idx + 1}.mkv`],
-    }));
+    const mib = 1024 * 1024;
 
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({
-        configured: true,
-        mock: true,
-        online: true,
-        checkedAt: '2026-11-27T08:00:00.000Z',
-        cached: false,
-        data: {
-          subscribes: [
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith('/api/media/overview')) {
+        return jsonResponse({
+          configured: true,
+          mock: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+          warnings: ['MoviePilot 整理队列暂时不可用'],
+          stats: {
+            downloading: 2,
+            pendingTransfer: 3,
+            todayImported: 5,
+            todayImportedApproximate: false,
+            seeding: 88,
+            seedUploadSpeed: 10 * mib,
+            seedTotalUploaded: 500 * gib,
+            library: { movieCount: 200, tvCount: 40, episodeCount: 1200 },
+          },
+          recent: [
+            {
+              title: '示例剧集 Alpha',
+              year: '2026',
+              type: '电视剧',
+              season: 'S01',
+              episodes: 'E03-E05',
+              episodeCount: 3,
+              date: '2026-11-27 06:00:00',
+              importedAt: new Date(now - 2 * 3600_000).toISOString(),
+              posterUrl: null,
+            },
+          ],
+        });
+      }
+      if (url.startsWith('/api/media/downloads')) {
+        return jsonResponse({
+          configured: true,
+          mock: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+          warnings: [],
+          items: [
+            {
+              hash: 'h1',
+              displayName: '示例下载剧集',
+              torrentName: 'Demo.Series.S02E01',
+              year: '2026',
+              seasonEpisode: 'S02E01',
+              posterUrl: null,
+              progress: 0.72,
+              dlSpeed: 8 * mib,
+              upSpeed: 1 * mib,
+              dlSpeedText: null,
+              upSpeedText: null,
+              eta: 180,
+              leftTime: null,
+              size: 4 * gib,
+              state: '下载中',
+              instanceName: 'qB 下载',
+              site: '站点甲',
+              matched: true,
+            },
+            {
+              hash: 'h2',
+              displayName: 'Unmatched Movie 2026',
+              torrentName: '[Demo].Unmatched.Movie.2026',
+              year: '',
+              seasonEpisode: '',
+              posterUrl: null,
+              progress: 0.2,
+              dlSpeed: 0,
+              upSpeed: 0,
+              dlSpeedText: null,
+              upSpeedText: null,
+              eta: null,
+              leftTime: null,
+              size: 8 * gib,
+              state: '等待连接',
+              instanceName: 'qB 下载',
+              site: '',
+              matched: false,
+            },
+          ],
+        });
+      }
+      if (url.startsWith('/api/media/subscriptions')) {
+        return jsonResponse({
+          configured: true,
+          mock: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          cached: false,
+          calendarAvailable: true,
+          warnings: [],
+          items: [
             {
               id: 1,
-              name: '示例剧集 Alpha',
-              year: '2025',
+              name: '追剧 Beta',
+              year: '2026',
               type: '电视剧',
-              season: 2,
-              state: 'R',
+              season: 1,
+              posterUrl: null,
+              state: '订阅中',
               totalEpisode: 12,
-              lackEpisode: 2,
+              startEpisode: 1,
+              completedEpisode: 5,
+              lackEpisode: 7,
+              downloadedEpisodes: [1, 2, 4, 6, 7],
+              latestEpisode: 7,
+              missingEpisodes: [3, 5, 8, 9, 10, 11, 12],
+              missingInferred: false,
+              nextAir: { date: '2026-11-30', episodeNumber: 8, name: '第 8 集' },
+              hasAired: null,
               lastUpdate: '2026-11-27 10:00:00',
             },
-          ],
-          transfers: [
             {
-              title: '示例电影 Beta',
+              id: 2,
+              name: '待映电影 Gamma',
+              year: '2026',
+              type: '电影',
+              season: null,
+              posterUrl: null,
+              state: '订阅中',
+              totalEpisode: 1,
+              startEpisode: 1,
+              completedEpisode: 0,
+              lackEpisode: 1,
+              downloadedEpisodes: [],
+              latestEpisode: null,
+              missingEpisodes: [],
+              missingInferred: false,
+              nextAir: null,
+              hasAired: false,
+              lastUpdate: '2026-11-26 10:00:00',
+            },
+            {
+              id: 3,
+              name: '已映电影 Delta',
               year: '2025',
               type: '电影',
-              seasons: '',
-              episodes: '',
-              status: false,
-              errmsg: '目标文件已存在',
-              date: '2026-11-27 09:00:00',
-              category: '电影',
+              season: null,
+              posterUrl: null,
+              state: '订阅中',
+              totalEpisode: 1,
+              startEpisode: 1,
+              completedEpisode: 0,
+              lackEpisode: 1,
+              downloadedEpisodes: [],
+              latestEpisode: null,
+              missingEpisodes: [],
+              missingInferred: false,
+              nextAir: null,
+              hasAired: true,
+              lastUpdate: '2026-11-25 10:00:00',
             },
           ],
-          transferTotal: 1,
-          downloads: [
-            {
-              title: '示例下载任务',
-              name: 'Demo.Download',
-              siteName: '示例站点',
-              size: 5 * gib,
-              progress: 65,
-              state: 'downloading',
-              dlSpeed: 8 * 1024 * 1024,
-              upSpeed: 1024 * 1024,
-              leftTime: '10 分钟',
-              downloader: 'qBittorrent',
-            },
-          ],
-          activeDownloads,
-          activeDownloadsTotal: 6,
-          transferQueue: {
-            available: true,
-            items: queueItems,
-            total: 6,
-          },
-          transferQueueTotal: 6,
-          sites: [
-            {
-              id: 1,
-              name: '示例站点',
-              domain: 'pt.example.com',
-              isActive: true,
-              priority: 1,
-              successCount: 50,
-              failCount: 1,
-              avgSeconds: 0.45,
-              lastState: 'success',
-              lastModDate: '2026-11-27 10:30:00',
-            },
-          ],
-          downloader: null,
-        },
-      }),
-    );
+        });
+      }
+      return jsonResponse({ error: 'Not Found' }, 404);
+    });
 
     render(
       <MemoryRouter>
@@ -124,61 +188,53 @@ describe('MediaPage 影视页', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('示例剧集 Alpha (2025)')).toBeInTheDocument();
-    expect(screen.getByText('（缺 2 集）')).toBeInTheDocument();
-    expect(screen.getByText('正在下载（共 6 个）')).toBeInTheDocument();
-    expect(screen.getAllByText('仅显示前 5 条，共 6 条')).toHaveLength(2);
-    expect(screen.getByText('示例下载任务')).toBeInTheDocument();
-    expect(screen.queryByText('示例下载任务 6')).not.toBeInTheDocument();
+    // 总览页签
+    expect(await screen.findByText('MoviePilot 整理队列暂时不可用')).toBeInTheDocument();
+    expect(screen.getByText('88')).toBeInTheDocument();
+    expect(screen.getByText('总上传 500.0 GiB')).toBeInTheDocument();
+    expect(screen.getByText('示例剧集 Alpha')).toBeInTheDocument();
+    expect(screen.getByText('S01 E03-E05')).toBeInTheDocument();
+    expect(screen.getByText('2 小时前')).toBeInTheDocument();
+    expect(screen.getByLabelText('示例剧集 Alpha 海报占位')).toHaveTextContent('示');
 
-    expect(screen.getByText('整理队列（共 6 项）')).toBeInTheDocument();
-    expect(screen.getByText('待整理剧集 1 (2025)')).toBeInTheDocument();
-    expect(screen.queryByText('待整理剧集 6 (2025)')).not.toBeInTheDocument();
-    expect(screen.getByText('Episode.1.mkv')).toBeInTheDocument();
-    expect(screen.getAllByText('等待中 1').length).toBeGreaterThanOrEqual(1);
+    // 切换正在下载页签
+    await user.click(screen.getByRole('tab', { name: '正在下载' }));
+    expect(await screen.findByText('示例下载剧集')).toBeInTheDocument();
+    expect(screen.getByText('S02E01')).toBeInTheDocument();
+    expect(screen.getByText('Unmatched Movie 2026')).toBeInTheDocument();
+    expect(screen.getByText('未识别')).toBeInTheDocument();
 
-    expect(screen.getByText('示例电影 Beta (2025)')).toBeInTheDocument();
-    expect(screen.getByText('目标文件已存在')).toBeInTheDocument();
-    expect(screen.getByText('pt.example.com')).toBeInTheDocument();
-    expect(screen.getByText('50 / 1')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /开始|停止|整理|删除/ })).not.toBeInTheDocument();
+    // 切换订阅追剧页签
+    await user.click(screen.getByRole('tab', { name: '订阅追剧' }));
+    expect(await screen.findByText('追剧 Beta (2026)')).toBeInTheDocument();
+    expect(screen.getByText('已更新到第 7 集 / 共 12 集')).toBeInTheDocument();
+    expect(screen.getByText('缺 E03、E05、E08、E09、E10、E11 + 更多')).toBeInTheDocument();
+    expect(screen.getByText('下一集：周一 11/30 第 8 集')).toBeInTheDocument();
+    expect(screen.getByText('待上映')).toBeInTheDocument();
+    expect(screen.getByText('已上映未入库')).toBeInTheDocument();
+    expect(screen.getAllByText(/暂无排期/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('整理队列不可用时显示版本提示且不影响其它区块', async () => {
+  it('正在下载页签无任务时展示空状态“当前没有下载任务”', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({
         configured: true,
         mock: false,
-        online: true,
         checkedAt: '2026-11-27T08:00:00.000Z',
         cached: false,
-        data: {
-          subscribes: [],
-          transfers: [],
-          transferTotal: 0,
-          downloads: [],
-          activeDownloads: [],
-          activeDownloadsTotal: 0,
-          transferQueue: {
-            available: false,
-            reason: '当前 MoviePilot 版本不支持整理队列',
-            items: [],
-            total: 0,
-          },
-          transferQueueTotal: 0,
-          sites: [],
-          downloader: null,
-        },
+        warnings: [],
+        items: [],
       }),
     );
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/media?tab=downloads']}>
         <MediaPage />
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('当前 MoviePilot 版本不支持整理队列')).toBeInTheDocument();
-    expect(screen.getByText('当前没有正在下载的任务')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('当前没有下载任务')).toBeInTheDocument();
+    });
   });
 });

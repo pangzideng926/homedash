@@ -9,6 +9,7 @@ import {
   computeDownloadersTotals,
   createEmptyStateCounts,
   createMockDownloaderSummaries,
+  createMockQbitTorrents,
   MAX_ACTIVE_TASKS_LIMIT,
 } from './aggregators.js';
 import {
@@ -65,6 +66,13 @@ export interface DownloadersService {
     id: string,
     options?: { refresh?: boolean; activeLimit?: number },
   ) => Promise<{ found: false } | { found: true; data: DownloaderInstanceSummary }>;
+  getInstanceTorrents: (
+    id: string,
+    options?: { refresh?: boolean },
+  ) => Promise<
+    | { ok: true; instanceName: string; torrents: Array<Record<string, unknown>> }
+    | { ok: false; instanceName: string; error: string }
+  >;
   testConnection: (
     rawBody: unknown,
   ) => Promise<
@@ -76,6 +84,15 @@ export interface DownloadersService {
 interface CacheEntry {
   expiresAtMs: number;
   summary: DownloaderInstanceSummary;
+}
+
+type InstanceTorrentsResult =
+  | { ok: true; instanceName: string; torrents: Array<Record<string, unknown>> }
+  | { ok: false; instanceName: string; error: string };
+
+interface TorrentsCacheEntry {
+  expiresAtMs: number;
+  result: InstanceTorrentsResult;
 }
 
 /**
@@ -93,6 +110,8 @@ export function createDownloadersService(
 
   const instanceCache = new Map<string, CacheEntry>();
   const inFlightById = new Map<string, Promise<DownloaderInstanceSummary>>();
+  const torrentsCache = new Map<string, TorrentsCacheEntry>();
+  const inFlightTorrentsById = new Map<string, Promise<InstanceTorrentsResult>>();
 
   function buildErrorSummary(
     instance: ResolvedDownloaderInstance,
@@ -383,6 +402,115 @@ export function createDownloadersService(
       return { found: true, data: applyActiveLimit(summary, effectiveLimit) };
     },
 
+    async getInstanceTorrents(
+      id: string,
+      reqOptions?: { refresh?: boolean },
+    ): Promise<InstanceTorrentsResult> {
+      const resolved = integrationsStore.resolveDownloadersConfig();
+      if (resolved.mock) {
+        const mockSummary = createMockDownloaderSummaries(getNow(), resolved.activeTasksLimit).find(
+          (item) => item.id === id,
+        );
+        if (!mockSummary) {
+          return { ok: false, instanceName: id, error: '未找到指定下载器实例' };
+        }
+        return {
+          ok: true,
+          instanceName: mockSummary.name,
+          torrents: createMockQbitTorrents(id),
+        };
+      }
+
+      const instance = resolved.instances.find((item) => item.id === id);
+      if (!instance) {
+        return { ok: false, instanceName: id, error: '未找到指定下载器实例' };
+      }
+
+      if (instance.type !== 'qbittorrent') {
+        return {
+          ok: false,
+          instanceName: instance.name,
+          error: `下载器 ${instance.name} 不是 qBittorrent 实例`,
+        };
+      }
+
+      if (!instance.url || !instance.username || !instance.password) {
+        return {
+          ok: false,
+          instanceName: instance.name,
+          error: `qBittorrent 实例 ${instance.name} 缺少连接凭据配置`,
+        };
+      }
+
+      const refresh = Boolean(reqOptions?.refresh);
+      const nowMs = getNow();
+      if (!refresh) {
+        const cached = torrentsCache.get(instance.id);
+        if (cached && nowMs < cached.expiresAtMs) {
+          return cached.result;
+        }
+      }
+
+      const existing = inFlightTorrentsById.get(instance.id);
+      if (existing) {
+        return existing;
+      }
+
+      const cfg: QbitClientConfig = {
+        instanceId: instance.id,
+        url: instance.url,
+        username: instance.username,
+        password: instance.password,
+        timeoutMs: resolved.timeoutMs,
+      };
+
+      const promise = (async (): Promise<InstanceTorrentsResult> => {
+        try {
+          const torrents = await qbitClient.getTorrentsInfo(cfg);
+          const finishedAt = getNow();
+          const success: InstanceTorrentsResult = {
+            ok: true,
+            instanceName: instance.name,
+            torrents,
+          };
+          const cacheTtlMs = resolved.cacheSeconds * 1000;
+          if (cacheTtlMs > 0) {
+            torrentsCache.set(instance.id, {
+              expiresAtMs: finishedAt + cacheTtlMs,
+              result: success,
+            });
+          } else {
+            torrentsCache.delete(instance.id);
+          }
+          return success;
+        } catch (error) {
+          const finishedAt = getNow();
+          const qbitErr =
+            error instanceof QbitClientError
+              ? error
+              : new QbitClientError('CONNECTION_FAILED', '获取 qBittorrent 种子列表失败');
+          const failure: InstanceTorrentsResult = {
+            ok: false,
+            instanceName: instance.name,
+            error: qbitErr.message,
+          };
+          torrentsCache.set(instance.id, {
+            expiresAtMs: finishedAt + FAILURE_CACHE_MS,
+            result: failure,
+          });
+          logger?.warn(
+            `下载器 [${instance.name}] 种子采集失败（${qbitErr.code}）：${qbitErr.message}`,
+          );
+          return failure;
+        }
+      })().finally(() => {
+        inFlightTorrentsById.delete(instance.id);
+      });
+
+      inFlightTorrentsById.set(instance.id, promise);
+      return promise;
+    },
+
     async testConnection(
       rawBody: unknown,
     ): Promise<
@@ -490,6 +618,7 @@ export function createDownloadersService(
 
     invalidateCache(): void {
       instanceCache.clear();
+      torrentsCache.clear();
       qbitClient.clearSessions();
       transmissionClient.clearSessions();
     },

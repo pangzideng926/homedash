@@ -3,6 +3,7 @@ import {
   ArrowUpDown,
   Bell,
   Film,
+  Flame,
   HardDrive,
   LayoutDashboard,
   Monitor,
@@ -15,6 +16,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'));
 const NasPage = lazy(() => import('@/pages/NasPage'));
 const SeedingPage = lazy(() => import('@/pages/SeedingPage'));
+const BrushPage = lazy(() => import('@/pages/BrushPage'));
 const DownloaderDetailPage = lazy(() => import('@/pages/DownloaderDetailPage'));
 const MediaPage = lazy(() => import('@/pages/MediaPage'));
 const DevicesPage = lazy(() => import('@/pages/DevicesPage'));
@@ -53,9 +55,25 @@ export const NAV_ROUTES: NavRouteItem[] = [
         component: NasPage,
       },
       {
+        id: 'media',
+        path: '/media',
+        title: '影视',
+        description: '影视总览、最近入库、正在下载与订阅追剧',
+        icon: Film,
+        component: MediaPage,
+      },
+      {
+        id: 'brush',
+        path: '/brush',
+        title: '刷流',
+        description: '刷流专用下载器实例与活跃任务监控',
+        icon: Flame,
+        component: BrushPage,
+      },
+      {
         id: 'seeding',
         path: '/seeding',
-        title: '下载与做种',
+        title: '下载器',
         description: '多实例下载器（qBittorrent / Transmission）只读传输与做种监控',
         icon: ArrowUpDown,
         component: SeedingPage,
@@ -69,14 +87,6 @@ export const NAV_ROUTES: NavRouteItem[] = [
             component: DownloaderDetailPage,
           },
         ],
-      },
-      {
-        id: 'media',
-        path: '/media',
-        title: '影视',
-        description: 'MoviePilot 订阅、入库记录、下载任务与站点状态',
-        icon: Film,
-        component: MediaPage,
       },
       {
         id: 'devices',
