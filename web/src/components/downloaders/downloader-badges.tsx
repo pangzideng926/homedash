@@ -34,15 +34,7 @@ export function DownloaderTagBadge({ tag, className }: { tag: DownloaderTag; cla
   const meta = DOWNLOADER_TAG_MAP[tag];
   if (!meta) return null;
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
-        meta.className,
-        className,
-      )}
-    >
-      {meta.label}
-    </span>
+    <StatusBadge status={meta.status} label={meta.label} showDot={false} className={className} />
   );
 }
 
@@ -58,7 +50,8 @@ export function DownloaderTaskStateBadge({
       status={getActiveTaskStatusVariant(state)}
       label={state}
       showDot={false}
-      className={cn('px-2 py-0 text-[11px]', className)}
+      size="sm"
+      className={className}
     />
   );
 }

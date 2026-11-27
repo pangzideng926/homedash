@@ -1,10 +1,40 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowUpDown, Bell, Film, HardDrive, Monitor, Server } from 'lucide-react';
-import { DataCard, PageHeader, StatusBadge, type StatusVariant } from '@/components/common';
+import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  CheckCircle2,
+  ChevronRight,
+  Download,
+  Film,
+  Flame,
+  HardDrive,
+  Layers,
+  RotateCw,
+  Server,
+} from 'lucide-react';
+import {
+  CardGrid,
+  DataCard,
+  EmptyState,
+  ErrorState,
+  ExpiryCountdown,
+  LoadingState,
+  PageHeader,
+  ProgressBar,
+  SectionCard,
+  StatusBadge,
+  type StatusVariant,
+} from '@/components/common';
 import { DeviceOsIcon } from '@/components/devices/DeviceOsIcon';
 import { formatSpeed } from '@/components/devices/device-utils';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DownloaderTagBadge,
+  DownloaderTypeBadge,
+} from '@/components/downloaders/downloader-badges';
+import { formatVpsCardTitle } from '@/components/vps/vps-utils';
+import { Button } from '@/components/ui/button';
 import { useApi } from '@/hooks/useApi';
 import {
   fetchDevicesStatus,
@@ -12,635 +42,946 @@ import {
   fetchMoviepilotSummary,
   fetchNasStatus,
   fetchVpsList,
+  type DetectedOs,
   type DevicesStatusResponse,
-  type DownloadersSummaryResponse,
-  type MoviepilotSummaryResponse,
+  type DeviceStatusItem,
   type NasStatusResponse,
-  type VpsLevel,
   type VpsListResponse,
-  type VpsServerView,
 } from '@/lib/api';
+import {
+  collectOverviewAnomalies,
+  computeMediaDownloadOverview,
+  getHighestDeviceDisk,
+  getHighestNasVolume,
+  getNearestVpsServers,
+  groupHomeDevicesByOs,
+} from '@/pages/overview-utils';
 
-function vpsLevelToStatus(level: VpsLevel | null): StatusVariant {
-  if (level === 'expired' || level === 'danger') return 'error';
-  if (level === 'warning') return 'warning';
-  if (level === 'ok') return 'success';
-  return 'unknown';
+function getGroupStatusBadge(devices: readonly DeviceStatusItem[]): {
+  status: StatusVariant;
+  label: string;
+} {
+  if (devices.length === 0) {
+    return { status: 'unconfigured', label: '未配置' };
+  }
+  const onlineCount = devices.filter((d) => d.online).length;
+  if (onlineCount === devices.length) {
+    return {
+      status: 'online',
+      label: devices.length === 1 ? '在线' : `${onlineCount}/${devices.length} 在线`,
+    };
+  }
+  if (onlineCount === 0) {
+    return {
+      status: 'offline',
+      label: devices.length === 1 ? '离线' : `0/${devices.length} 在线`,
+    };
+  }
+  return {
+    status: 'warning',
+    label: `${onlineCount}/${devices.length} 在线`,
+  };
 }
 
-function formatDaysLeftLabel(server: VpsServerView): string {
-  if (server.daysLeft === null) return '日期无效';
-  if (server.daysLeft < 0) return `已过期 ${Math.abs(server.daysLeft)} 天`;
-  if (server.daysLeft === 0) return '今天到期';
-  return `剩余 ${server.daysLeft} 天`;
+interface DeviceGroupCardProps {
+  title: string;
+  os: DetectedOs;
+  devices: readonly DeviceStatusItem[];
+  loading: boolean;
+  error: Error | null;
+  data: DevicesStatusResponse | null;
+  onRetry: () => void;
 }
 
-function getNearestVpsServer(servers: readonly VpsServerView[]): VpsServerView | null {
-  const valid = servers.filter((s) => s.daysLeft !== null && s.level !== null);
-  if (valid.length === 0) return null;
-  return valid.reduce((nearest, current) =>
-    (current.daysLeft ?? Infinity) < (nearest.daysLeft ?? Infinity) ? current : nearest,
+function DeviceGroupCard({
+  title,
+  os,
+  devices,
+  loading,
+  error,
+  data,
+  onRetry,
+}: DeviceGroupCardProps) {
+  const icon = (
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+      <DeviceOsIcon os={os} className="size-4" />
+    </div>
+  );
+
+  if (loading && !data) {
+    return (
+      <SectionCard leading={icon} title={title}>
+        <LoadingState
+          variant="skeleton"
+          rows={1}
+          columns={1}
+          compact
+          message={`正在加载 ${title} 状态...`}
+        />
+      </SectionCard>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <SectionCard
+        leading={icon}
+        title={title}
+        actions={
+          <Link to="/devices" className="text-xs font-medium text-primary hover:underline">
+            查看设备
+          </Link>
+        }
+      >
+        <ErrorState
+          compact
+          title={`获取 ${title} 状态失败`}
+          message={error.message}
+          onRetry={onRetry}
+        />
+      </SectionCard>
+    );
+  }
+
+  if (!data || !data.configured || data.errorCode === 'UNCONFIGURED') {
+    return (
+      <Link
+        to="/devices"
+        className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <SectionCard
+          interactive
+          leading={icon}
+          title={title}
+          actions={<StatusBadge status="unconfigured" label="未配置" />}
+        >
+          <EmptyState
+            compact
+            hideIcon
+            title={`暂未配置 ${title} 设备`}
+            description="点击前往家用设备管理页"
+          />
+        </SectionCard>
+      </Link>
+    );
+  }
+
+  if (data.error) {
+    return (
+      <SectionCard
+        leading={icon}
+        title={title}
+        actions={
+          <Link to="/devices" className="text-xs font-medium text-primary hover:underline">
+            查看设备
+          </Link>
+        }
+      >
+        <ErrorState compact title="设备清单读取失败" message={data.error} onRetry={onRetry} />
+      </SectionCard>
+    );
+  }
+
+  if (devices.length === 0) {
+    return (
+      <Link
+        to="/devices"
+        className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <SectionCard
+          interactive
+          leading={icon}
+          title={title}
+          actions={<StatusBadge status="unconfigured" label="未配置" />}
+        >
+          <EmptyState
+            compact
+            hideIcon
+            title={`暂无 ${title} 设备`}
+            description="点击前往家用设备页查看"
+          />
+        </SectionCard>
+      </Link>
+    );
+  }
+
+  const badge = getGroupStatusBadge(devices);
+
+  return (
+    <Link
+      to="/devices"
+      className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <SectionCard
+        interactive
+        className="h-full"
+        leading={icon}
+        title={title}
+        subtitle={
+          devices.length === 1
+            ? devices[0]?.name
+            : `共 ${devices.length} 台 · ${devices.filter((d) => d.online).length} 台在线`
+        }
+        actions={
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status={badge.status} label={badge.label} />
+            <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+          </div>
+        }
+      >
+        {devices.length === 1 && devices[0] ? (
+          (() => {
+            const dev = devices[0];
+            if (!dev.online || !dev.data) {
+              return (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  {dev.error ?? '设备离线或无法连接'}
+                </p>
+              );
+            }
+            const topDisk = getHighestDeviceDisk(dev.data.disks);
+            return (
+              <div className="space-y-2.5">
+                <ProgressBar
+                  ariaLabel={`${dev.name} CPU`}
+                  label="CPU"
+                  valueText={`${dev.data.cpu.loadPercent}%`}
+                  value={dev.data.cpu.loadPercent}
+                  size="sm"
+                />
+                <ProgressBar
+                  ariaLabel={`${dev.name} 内存`}
+                  label="内存"
+                  valueText={`${dev.data.memory.usedPercent}%`}
+                  value={dev.data.memory.usedPercent}
+                  size="sm"
+                />
+                {topDisk ? (
+                  <ProgressBar
+                    ariaLabel={`${dev.name} 磁盘 ${topDisk.mount}`}
+                    label={`磁盘 (${topDisk.mount})`}
+                    valueText={`${topDisk.usedPercent}%`}
+                    value={topDisk.usedPercent}
+                    size="sm"
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">暂无磁盘数据</p>
+                )}
+              </div>
+            );
+          })()
+        ) : (
+          <ul className="space-y-2.5">
+            {devices.map((dev) => {
+              const topDisk = dev.data ? getHighestDeviceDisk(dev.data.disks) : null;
+              return (
+                <li
+                  key={dev.id}
+                  className="space-y-1.5 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate font-medium text-foreground">{dev.name}</span>
+                    <StatusBadge size="sm" status={dev.online ? 'online' : 'offline'} />
+                  </div>
+                  {dev.online && dev.data ? (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground tabular-nums">
+                      <span>CPU {dev.data.cpu.loadPercent}%</span>
+                      <span>内存 {dev.data.memory.usedPercent}%</span>
+                      {topDisk ? (
+                        <span>
+                          磁盘({topDisk.mount}) {topDisk.usedPercent}%
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="truncate text-[11px] text-red-600 dark:text-red-400">
+                      {dev.error ?? '设备离线'}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </SectionCard>
+    </Link>
   );
 }
 
-function buildDevicesSummaryBadge(
-  data: DevicesStatusResponse | null,
-  loading: boolean,
-  error: Error | null,
-): {
-  headline: string;
-  status: StatusVariant;
-  statusLabel: string;
-  message?: string;
-} {
+function NasOverviewCard({
+  data,
+  loading,
+  error,
+  onRetry,
+}: {
+  data: NasStatusResponse | null;
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+}) {
   if (loading && !data) {
-    return {
-      headline: '加载中...',
-      status: 'unknown',
-      statusLabel: '采集中',
-      message: '正在采集家用设备状态',
-    };
+    return (
+      <SectionCard icon={HardDrive} title="NAS">
+        <LoadingState
+          variant="skeleton"
+          rows={1}
+          columns={1}
+          compact
+          message="正在加载 NAS 状态..."
+        />
+      </SectionCard>
+    );
   }
+
   if (error && !data) {
-    return {
-      headline: '状态异常',
-      status: 'error',
-      statusLabel: '请求失败',
-      message: error.message,
-    };
-  }
-  if (!data || !data.configured || data.errorCode === 'UNCONFIGURED') {
-    return {
-      headline: '未配置',
-      status: 'unconfigured',
-      statusLabel: '未配置',
-      message: '点击进入家用设备管理页',
-    };
-  }
-  if (data.error) {
-    return {
-      headline: '文件异常',
-      status: 'error',
-      statusLabel: '异常',
-      message: data.error,
-    };
-  }
-  if (data.summary.total === 0) {
-    return {
-      headline: '0 / 0',
-      status: 'unknown',
-      statusLabel: '无启用设备',
-      message: '点击添加或启用设备',
-    };
+    return (
+      <SectionCard
+        icon={HardDrive}
+        title="NAS"
+        actions={
+          <Link to="/nas" className="text-xs font-medium text-primary hover:underline">
+            查看 NAS
+          </Link>
+        }
+      >
+        <ErrorState compact title="获取 NAS 状态失败" message={error.message} onRetry={onRetry} />
+      </SectionCard>
+    );
   }
 
-  const allOnline = data.summary.online === data.summary.total;
-  const noneOnline = data.summary.online === 0;
-  return {
-    headline: `${data.summary.online} / ${data.summary.total} 在线`,
-    status: allOnline ? 'success' : noneOnline ? 'error' : 'warning',
-    statusLabel: allOnline ? '全部在线' : noneOnline ? '全部离线' : '部分离线',
-  };
-}
-
-function buildVpsCardProps(
-  data: VpsListResponse | null,
-  loading: boolean,
-  error: Error | null,
-): {
-  value: string;
-  status: StatusVariant;
-  statusLabel: string;
-  footer: string;
-} {
-  if (loading && !data) {
-    return {
-      value: '加载中...',
-      status: 'unknown',
-      statusLabel: '加载中',
-      footer: '正在读取 VPS 到期清单',
-    };
-  }
-  if (error && !data) {
-    return {
-      value: '读取失败',
-      status: 'error',
-      statusLabel: '请求失败',
-      footer: error.message,
-    };
-  }
-  if (!data || !data.configured || data.errorCode === 'UNCONFIGURED') {
-    return {
-      value: '未配置',
-      status: 'unconfigured',
-      statusLabel: '未配置',
-      footer: '点击进入 VPS 管理页',
-    };
-  }
-  if (data.error) {
-    return {
-      value: '文件异常',
-      status: 'error',
-      statusLabel: '异常',
-      footer: data.error,
-    };
-  }
-  if (data.summary.total === 0) {
-    return {
-      value: '0 台',
-      status: 'unknown',
-      statusLabel: '暂无记录',
-      footer: '点击添加第一台 VPS',
-    };
-  }
-
-  const nearest = getNearestVpsServer(data.servers);
-  if (!nearest) {
-    return {
-      value: `${data.summary.total} 台`,
-      status: 'error',
-      statusLabel: '日期异常',
-      footer: '存在日期格式错误的条目，点击查看',
-    };
-  }
-
-  const statusLabel = formatDaysLeftLabel(nearest);
-  return {
-    value: `${data.summary.total} 台`,
-    status: vpsLevelToStatus(nearest.level),
-    statusLabel,
-    footer: `最近到期：${nearest.name}（${statusLabel}）`,
-  };
-}
-
-function buildNasCardView(
-  data: NasStatusResponse | null,
-  loading: boolean,
-  error: Error | null,
-): {
-  to: string;
-  value: string;
-  status: StatusVariant;
-  statusLabel: string;
-  lines: string[];
-  footer?: string;
-} {
-  if (loading && !data) {
-    return {
-      to: '/nas',
-      value: '加载中...',
-      status: 'unknown',
-      statusLabel: '采集中',
-      lines: [],
-      footer: '正在采集 NAS 状态',
-    };
-  }
-  if (error && !data) {
-    return {
-      to: '/nas',
-      value: '读取失败',
-      status: 'error',
-      statusLabel: '请求失败',
-      lines: [],
-      footer: error.message,
-    };
-  }
   if (!data || !data.configured) {
-    return {
-      to: '/settings',
-      value: '未配置',
-      status: 'unconfigured',
-      statusLabel: '未配置',
-      lines: [],
-      footer: '未配置，去设置',
-    };
+    return (
+      <Link
+        to="/nas"
+        className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <SectionCard
+          interactive
+          icon={HardDrive}
+          title="NAS"
+          actions={<StatusBadge status="unconfigured" label="未配置" />}
+        >
+          <EmptyState
+            compact
+            hideIcon
+            title="暂未配置 NAS"
+            description="点击进入 NAS 或前往设置页配置"
+          />
+        </SectionCard>
+      </Link>
+    );
   }
+
   if (!data.online || !data.data) {
-    return {
-      to: '/nas',
-      value: '离线',
-      status: 'error',
-      statusLabel: '离线',
-      lines: [],
-      footer: data.error ?? 'NAS 连接失败',
-    };
+    return (
+      <Link
+        to="/nas"
+        className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <SectionCard
+          interactive
+          icon={HardDrive}
+          title="NAS"
+          actions={
+            <div className="flex items-center gap-1.5">
+              <StatusBadge status="offline" />
+              <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+            </div>
+          }
+        >
+          <p className="text-xs text-red-600 dark:text-red-400">{data.error ?? 'NAS 连接失败'}</p>
+        </SectionCard>
+      </Link>
+    );
   }
 
-  const d = data.data;
-  const topVolume =
-    d.volumes.length > 0
-      ? d.volumes.reduce((best, cur) => (cur.usedPercent > best.usedPercent ? cur : best))
-      : null;
+  const nas = data.data;
+  const topVolume = getHighestNasVolume(nas.volumes);
 
-  const lines = [
-    `CPU ${d.cpu.loadPercent}% · 内存 ${d.memory.usedPercent}%`,
-    d.maxTemperatureC !== null ? `最高温度 ${d.maxTemperatureC}℃` : '温度传感器不可用',
-    topVolume ? `最高卷 ${topVolume.mount}（${topVolume.usedPercent}%）` : '暂无挂载卷数据',
-  ];
-
-  return {
-    to: '/nas',
-    value: d.hostname,
-    status: 'success',
-    statusLabel: '在线',
-    lines,
-  };
+  return (
+    <Link
+      to="/nas"
+      className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <SectionCard
+        interactive
+        className="h-full"
+        icon={HardDrive}
+        title="NAS"
+        subtitle={nas.hostname}
+        actions={
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status="online" />
+            <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+          </div>
+        }
+        footer={
+          <div className="flex w-full flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
+            <span>
+              {nas.maxTemperatureC !== null
+                ? `最高温度 ${nas.maxTemperatureC}℃`
+                : '温度传感器不可用'}
+            </span>
+            {nas.raids.length > 0 ? (
+              <span>
+                RAID {nas.raids.filter((r) => r.healthy).length}/{nas.raids.length} 正常
+              </span>
+            ) : null}
+          </div>
+        }
+      >
+        <div className="space-y-2.5">
+          <ProgressBar
+            ariaLabel="NAS CPU"
+            label="CPU"
+            valueText={`${nas.cpu.loadPercent}%`}
+            value={nas.cpu.loadPercent}
+            warnThreshold={75}
+            dangerThreshold={90}
+            size="sm"
+          />
+          <ProgressBar
+            ariaLabel="NAS 内存"
+            label="内存"
+            valueText={`${nas.memory.usedPercent}%`}
+            value={nas.memory.usedPercent}
+            warnThreshold={80}
+            dangerThreshold={90}
+            size="sm"
+          />
+          {topVolume ? (
+            <ProgressBar
+              ariaLabel={`NAS 磁盘 ${topVolume.mount}`}
+              label={`磁盘 (${topVolume.mount})`}
+              valueText={`${topVolume.usedPercent}%`}
+              value={topVolume.usedPercent}
+              warnThreshold={80}
+              dangerThreshold={90}
+              size="sm"
+            />
+          ) : (
+            <p className="text-xs text-muted-foreground">暂无挂载卷数据</p>
+          )}
+        </div>
+      </SectionCard>
+    </Link>
+  );
 }
 
-function buildDownloadersCardView(
-  data: DownloadersSummaryResponse | null,
-  loading: boolean,
-  error: Error | null,
-): {
-  to: string;
-  value: string;
-  status: StatusVariant;
-  statusLabel: string;
-  lines: string[];
-  footer?: string;
-} {
-  if (loading && !data) {
-    return {
-      to: '/seeding',
-      value: '加载中...',
-      status: 'unknown',
-      statusLabel: '采集中',
-      lines: [],
-      footer: '正在读取下载器状态',
-    };
-  }
-  if (error && !data) {
-    return {
-      to: '/seeding',
-      value: '读取失败',
-      status: 'error',
-      statusLabel: '请求失败',
-      lines: [],
-      footer: error.message,
-    };
-  }
-  if (!data || !data.configured) {
-    return {
-      to: '/settings',
-      value: '未配置',
-      status: 'unconfigured',
-      statusLabel: '未配置',
-      lines: [],
-      footer: '未配置，去设置',
-    };
-  }
-  if (data.totals.totalInstances === 0) {
-    return {
-      to: '/settings',
-      value: '0 实例',
-      status: 'unknown',
-      statusLabel: '未启用',
-      lines: [],
-      footer: '请前往设置页启用下载器实例',
-    };
-  }
+function VpsNearestSection({
+  data,
+  loading,
+  error,
+  onRetry,
+}: {
+  data: VpsListResponse | null;
+  loading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+}) {
+  const nearestServers =
+    data?.configured && !data.error ? getNearestVpsServers(data.servers, 3) : [];
 
-  const { totals } = data;
-  const issueCount = totals.counts.error + totals.counts.stalled;
-  const allOnline = totals.onlineInstances === totals.totalInstances;
-  const noneOnline = totals.onlineInstances === 0;
-
-  let status: StatusVariant = 'success';
-  let statusLabel = '正常';
-  if (noneOnline) {
-    status = 'error';
-    statusLabel = '全部离线';
-  } else if (!allOnline) {
-    status = 'warning';
-    statusLabel = '部分离线';
-  } else if (issueCount > 0) {
-    status = 'warning';
-    statusLabel = `异常 ${issueCount}`;
-  }
-
-  return {
-    to: '/seeding',
-    value: noneOnline ? '连接失败' : `${totals.counts.seeding} 做种`,
-    status,
-    statusLabel,
-    lines: [
-      `上行 ${formatSpeed(totals.upSpeed)} · 下行 ${formatSpeed(totals.dlSpeed)}`,
-      `做种 ${totals.counts.seeding} · 出错/卡住 ${issueCount}`,
-      `在线实例 ${totals.onlineInstances} / ${totals.totalInstances}`,
-    ],
-  };
-}
-
-function buildMoviepilotCardView(
-  data: MoviepilotSummaryResponse | null,
-  loading: boolean,
-  error: Error | null,
-): {
-  to: string;
-  value: string;
-  status: StatusVariant;
-  statusLabel: string;
-  summaryLine?: string;
-  recentTransfers: Array<{ title: string; status: boolean }>;
-  footer?: string;
-} {
-  if (loading && !data) {
-    return {
-      to: '/media',
-      value: '加载中...',
-      status: 'unknown',
-      statusLabel: '采集中',
-      recentTransfers: [],
-      footer: '正在读取影视数据',
-    };
-  }
-  if (error && !data) {
-    return {
-      to: '/media',
-      value: '读取失败',
-      status: 'error',
-      statusLabel: '请求失败',
-      recentTransfers: [],
-      footer: error.message,
-    };
-  }
-  if (!data || !data.configured) {
-    return {
-      to: '/settings',
-      value: '未配置',
-      status: 'unconfigured',
-      statusLabel: '未配置',
-      recentTransfers: [],
-      footer: '未配置，去设置',
-    };
-  }
-  if (!data.online || !data.data) {
-    return {
-      to: '/media',
-      value: '连接失败',
-      status: 'error',
-      statusLabel: '异常',
-      recentTransfers: [],
-      footer: data.error ?? '无法连接 MoviePilot',
-    };
-  }
-
-  const d = data.data;
-  const downloadingCount =
-    d.activeDownloadsTotal ?? d.activeDownloads?.length ?? d.downloads.length;
-  const queueAvailable = d.transferQueue ? d.transferQueue.available : true;
-  const queueCount = d.transferQueueTotal ?? d.transferQueue?.total ?? 0;
-
-  return {
-    to: '/media',
-    value: `${d.subscribes.length} 订阅`,
-    status: 'success',
-    statusLabel: '在线',
-    summaryLine: `订阅 ${d.subscribes.length} · 下载中 ${downloadingCount} / 待整理 ${queueAvailable ? queueCount : '不支持'}`,
-    recentTransfers: d.transfers.slice(0, 3).map((t) => ({ title: t.title, status: t.status })),
-  };
+  return (
+    <SectionCard
+      icon={Server}
+      title="VPS 最近到期"
+      subtitle={
+        data?.configured && !data.error
+          ? `共 ${data.summary.total} 台 · 7 天内到期 ${data.summary.within7Days} 台`
+          : '云服务器续费与到期倒计时'
+      }
+      actions={
+        <Link
+          to="/vps"
+          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        >
+          <span>查看全部</span>
+          <ChevronRight className="size-3.5" aria-hidden="true" />
+        </Link>
+      }
+    >
+      {loading && !data ? (
+        <LoadingState
+          variant="skeleton"
+          rows={2}
+          columns={1}
+          compact
+          message="正在加载 VPS 到期清单..."
+        />
+      ) : error && !data ? (
+        <ErrorState compact title="加载 VPS 列表失败" message={error.message} onRetry={onRetry} />
+      ) : !data || !data.configured || data.errorCode === 'UNCONFIGURED' ? (
+        <EmptyState compact hideIcon title="尚未配置 VPS 清单" description="点击查看全部前往配置" />
+      ) : data.error ? (
+        <ErrorState compact title="VPS 清单文件读取失败" message={data.error} onRetry={onRetry} />
+      ) : nearestServers.length === 0 ? (
+        <EmptyState compact hideIcon title="暂无 VPS 记录" description="可在 VPS 页面添加服务器" />
+      ) : (
+        <div className="space-y-2.5">
+          {nearestServers.map((server) => (
+            <Link
+              key={server.id}
+              to="/vps"
+              className="block rounded-lg border border-border/70 bg-muted/20 p-3 transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-foreground">
+                    {formatVpsCardTitle(server.name, server.region)}
+                  </div>
+                  {server.provider ? (
+                    <div className="truncate text-xs text-muted-foreground">{server.provider}</div>
+                  ) : null}
+                </div>
+                <ChevronRight
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </div>
+              <ExpiryCountdown
+                size="sm"
+                daysLeft={server.daysLeft}
+                level={server.level}
+                expiresAt={server.expiresAt}
+                error={server.error}
+              />
+            </Link>
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
 }
 
 export function OverviewPage() {
-  const nasFetcher = useCallback((signal: AbortSignal) => fetchNasStatus({ signal }), []);
-  const downloadersFetcher = useCallback(
-    (signal: AbortSignal) => fetchDownloadersSummary({ signal }),
+  const forceRefreshRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const devicesFetcher = useCallback(
+    (signal: AbortSignal) => fetchDevicesStatus({ refresh: forceRefreshRef.current, signal }),
     [],
   );
-  const mpFetcher = useCallback((signal: AbortSignal) => fetchMoviepilotSummary({ signal }), []);
-  const devicesFetcher = useCallback((signal: AbortSignal) => fetchDevicesStatus({ signal }), []);
+  const nasFetcher = useCallback(
+    (signal: AbortSignal) => fetchNasStatus({ refresh: forceRefreshRef.current, signal }),
+    [],
+  );
   const vpsFetcher = useCallback((signal: AbortSignal) => fetchVpsList(signal), []);
+  const downloadersFetcher = useCallback(
+    (signal: AbortSignal) => fetchDownloadersSummary({ refresh: forceRefreshRef.current, signal }),
+    [],
+  );
+  const mpFetcher = useCallback(
+    (signal: AbortSignal) => fetchMoviepilotSummary({ refresh: forceRefreshRef.current, signal }),
+    [],
+  );
 
+  const devicesState = useApi(devicesFetcher);
   const nasState = useApi(nasFetcher);
+  const vpsState = useApi(vpsFetcher);
   const downloadersState = useApi(downloadersFetcher);
   const mpState = useApi(mpFetcher);
-  const devicesState = useApi(devicesFetcher);
-  const vpsState = useApi(vpsFetcher);
 
-  const nasCard = buildNasCardView(nasState.data, nasState.loading, nasState.error);
-  const downloadersCard = buildDownloadersCardView(
-    downloadersState.data,
-    downloadersState.loading,
-    downloadersState.error,
+  const handleRefreshAll = async () => {
+    setRefreshing(true);
+    forceRefreshRef.current = true;
+    try {
+      await Promise.all([
+        devicesState.refetch(),
+        nasState.refetch(),
+        vpsState.refetch(),
+        downloadersState.refetch(),
+        mpState.refetch(),
+      ]);
+    } finally {
+      forceRefreshRef.current = false;
+      setRefreshing(false);
+    }
+  };
+
+  const anyInitialLoading =
+    (devicesState.loading && !devicesState.data) ||
+    (nasState.loading && !nasState.data) ||
+    (vpsState.loading && !vpsState.data) ||
+    (downloadersState.loading && !downloadersState.data) ||
+    (mpState.loading && !mpState.data);
+
+  const allInitialLoading =
+    devicesState.loading &&
+    !devicesState.data &&
+    nasState.loading &&
+    !nasState.data &&
+    vpsState.loading &&
+    !vpsState.data &&
+    downloadersState.loading &&
+    !downloadersState.data &&
+    mpState.loading &&
+    !mpState.data;
+
+  const groupedDevices = groupHomeDevicesByOs(
+    devicesState.data?.configured && !devicesState.data.error ? devicesState.data.devices : [],
   );
-  const mpCard = buildMoviepilotCardView(mpState.data, mpState.loading, mpState.error);
-  const devicesSummary = buildDevicesSummaryBadge(
-    devicesState.data,
-    devicesState.loading,
-    devicesState.error,
-  );
-  const vpsCard = buildVpsCardProps(vpsState.data, vpsState.loading, vpsState.error);
+
+  const anomalies = collectOverviewAnomalies({
+    devicesData: devicesState.data,
+    devicesError: devicesState.error,
+    nasData: nasState.data,
+    nasError: nasState.error,
+    vpsData: vpsState.data,
+    vpsError: vpsState.error,
+    downloadersData: downloadersState.data,
+    downloadersError: downloadersState.error,
+  });
+
+  const mediaOverview = computeMediaDownloadOverview(downloadersState.data, mpState.data);
+  const mediaInitialLoading =
+    downloadersState.loading && !downloadersState.data && mpState.loading && !mpState.data;
+  const mediaHasError =
+    (Boolean(downloadersState.error) && !downloadersState.data) ||
+    (Boolean(mpState.error) && !mpState.data);
+  const mediaUnconfigured =
+    !mediaInitialLoading &&
+    !mediaHasError &&
+    !mediaOverview.hasDownloaders &&
+    !mediaOverview.hasMoviepilot;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="总览"
-        description="集中查看家庭 NAS、下载做种、影视订阅、家用设备、VPS 到期与安全告警。"
+        description="集中查看家用设备、NAS、VPS 到期、影视下载概况与异常提示。"
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void handleRefreshAll()}
+            disabled={refreshing || anyInitialLoading}
+          >
+            <RotateCw
+              className={refreshing ? 'size-4 animate-spin' : 'size-4'}
+              aria-hidden="true"
+            />
+            <span>{refreshing ? '刷新中...' : '刷新'}</span>
+          </Button>
+        }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {/* NAS 汇总卡 */}
-        <Link
-          to={nasCard.to}
-          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Card className="flex h-full flex-col justify-between transition-colors hover:border-primary/40">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-base">NAS 状态</CardTitle>
-                <CardDescription>存储卷、温度与系统运行状态</CardDescription>
-              </div>
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <HardDrive className="size-4" aria-hidden="true" />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="truncate text-2xl font-semibold tracking-tight text-foreground">
-                  {nasCard.value}
-                </div>
-                <StatusBadge status={nasCard.status} label={nasCard.statusLabel} />
-              </div>
-              {nasCard.lines.length > 0 ? (
-                <ul className="space-y-1 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-                  {nasCard.lines.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              ) : nasCard.footer ? (
-                <p className="text-xs text-muted-foreground">{nasCard.footer}</p>
-              ) : null}
-            </CardContent>
-          </Card>
-        </Link>
-
-        {/* 下载汇总卡 */}
-        <Link
-          to={downloadersCard.to}
-          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Card className="flex h-full flex-col justify-between transition-colors hover:border-primary/40">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-base">下载与做种</CardTitle>
-                <CardDescription>多实例下载器实时传输与做种汇总</CardDescription>
-              </div>
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <ArrowUpDown className="size-4" aria-hidden="true" />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="truncate text-2xl font-semibold tracking-tight text-foreground">
-                  {downloadersCard.value}
-                </div>
-                <StatusBadge status={downloadersCard.status} label={downloadersCard.statusLabel} />
-              </div>
-              {downloadersCard.lines.length > 0 ? (
-                <ul className="space-y-1 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-                  {downloadersCard.lines.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              ) : downloadersCard.footer ? (
-                <p className="text-xs text-muted-foreground">{downloadersCard.footer}</p>
-              ) : null}
-            </CardContent>
-          </Card>
-        </Link>
-
-        {/* 影视汇总卡 */}
-        <Link
-          to={mpCard.to}
-          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Card className="flex h-full flex-col justify-between transition-colors hover:border-primary/40">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-base">影视订阅</CardTitle>
-                <CardDescription>MoviePilot 订阅、下载与最近入库</CardDescription>
-              </div>
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <Film className="size-4" aria-hidden="true" />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <div className="truncate text-2xl font-semibold tracking-tight text-foreground">
-                  {mpCard.value}
-                </div>
-                <StatusBadge status={mpCard.status} label={mpCard.statusLabel} />
-              </div>
-              {mpCard.summaryLine ? (
-                <div className="space-y-1.5 border-t border-border/60 pt-2 text-xs">
-                  <div className="text-muted-foreground">{mpCard.summaryLine}</div>
-                  {mpCard.recentTransfers.length > 0 ? (
-                    <ul className="space-y-1">
-                      {mpCard.recentTransfers.map((item, idx) => (
-                        <li
-                          key={`${item.title}-${idx}`}
-                          className="flex items-center justify-between gap-2"
-                        >
-                          <span className="truncate text-foreground">{item.title}</span>
-                          <StatusBadge
-                            status={item.status ? 'success' : 'error'}
-                            label={item.status ? '成功' : '失败'}
-                            showDot={false}
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-muted-foreground">暂无最近入库记录</p>
-                  )}
-                </div>
-              ) : mpCard.footer ? (
-                <p className="text-xs text-muted-foreground">{mpCard.footer}</p>
-              ) : null}
-            </CardContent>
-          </Card>
-        </Link>
-
-        {/* 家用设备卡 */}
-        <Link
-          to="/devices"
-          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Card className="flex h-full flex-col justify-between transition-colors hover:border-primary/40">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-base">家用设备</CardTitle>
-                <CardDescription>多设备在线状态与硬件负载</CardDescription>
-              </div>
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <Monitor className="size-4" aria-hidden="true" />
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-2xl font-semibold tracking-tight text-foreground">
-                  {devicesSummary.headline}
-                </div>
-                <StatusBadge status={devicesSummary.status} label={devicesSummary.statusLabel} />
-              </div>
-
-              {devicesSummary.message ? (
-                <p className="text-xs text-muted-foreground">{devicesSummary.message}</p>
-              ) : devicesState.data && devicesState.data.devices.length > 0 ? (
-                <ul className="space-y-1.5 border-t border-border/60 pt-2">
-                  {devicesState.data.devices.map((device) => (
-                    <li key={device.id} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        <DeviceOsIcon os={device.os} className="size-3.5 shrink-0" />
-                        <span className="truncate font-medium text-foreground">{device.name}</span>
-                      </span>
-                      <span className="flex shrink-0 items-center gap-2 text-muted-foreground">
-                        <StatusBadge
-                          status={device.online ? 'success' : 'error'}
-                          label={device.online ? '在线' : '离线'}
-                        />
-                        {device.online && device.data ? (
-                          <span>
-                            CPU {device.data.cpu.loadPercent}% · 内存{' '}
-                            {device.data.memory.usedPercent}%
-                          </span>
-                        ) : null}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </CardContent>
-          </Card>
-        </Link>
-
-        {/* VPS 到期卡 */}
-        <Link
-          to="/vps"
-          className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <DataCard
-            title="VPS 到期"
-            description="云服务器续费与到期提醒"
-            icon={Server}
-            value={vpsCard.value}
-            status={vpsCard.status}
-            statusLabel={vpsCard.statusLabel}
-            footer={vpsCard.footer}
-            className="h-full transition-colors hover:border-primary/40"
+      {/* 异常提示区 */}
+      <SectionCard
+        leading={
+          anomalies.length > 0 ? (
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-600 dark:text-red-400">
+              <AlertTriangle className="size-4" aria-hidden="true" />
+            </div>
+          ) : (
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <CheckCircle2 className="size-4" aria-hidden="true" />
+            </div>
+          )
+        }
+        title="异常提示"
+        subtitle="汇总设备离线、VPS 7 天内到期、磁盘 ≥ 90% 与下载器连接异常"
+        actions={
+          allInitialLoading ? undefined : anomalies.length > 0 ? (
+            <StatusBadge status="danger" label={`${anomalies.length} 项异常`} />
+          ) : (
+            <StatusBadge status="success" label="运行正常" />
+          )
+        }
+      >
+        {allInitialLoading ? (
+          <LoadingState
+            variant="skeleton"
+            rows={1}
+            columns={1}
+            compact
+            message="正在检查异常状态..."
           />
-        </Link>
+        ) : anomalies.length === 0 ? (
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2.5 text-sm text-emerald-700 dark:text-emerald-400">
+            暂无异常
+          </div>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {anomalies.map((item) => (
+              <Link
+                key={item.id}
+                to={item.to}
+                className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge
+                      size="sm"
+                      status={item.severity === 'error' ? 'danger' : 'warning'}
+                      label={item.categoryLabel}
+                    />
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {item.title}
+                    </span>
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
+                </div>
+                <ChevronRight
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </Link>
+            ))}
+          </div>
+        )}
+      </SectionCard>
 
-        {/* 最近告警卡 */}
-        <DataCard
-          title="最近告警"
-          description="账号登录与安全异常记录"
-          icon={Bell}
-          value="暂无数据"
-          status="unknown"
-          statusLabel="待接入"
+      {/* 设备区：Windows / Mac / NAS */}
+      <CardGrid columns={3}>
+        <DeviceGroupCard
+          title="Windows"
+          os="windows"
+          devices={groupedDevices.windows}
+          loading={devicesState.loading}
+          error={devicesState.error}
+          data={devicesState.data}
+          onRetry={() => void devicesState.refetch()}
         />
-      </div>
+
+        <DeviceGroupCard
+          title="Mac"
+          os="macos"
+          devices={groupedDevices.macos}
+          loading={devicesState.loading}
+          error={devicesState.error}
+          data={devicesState.data}
+          onRetry={() => void devicesState.refetch()}
+        />
+
+        <NasOverviewCard
+          data={nasState.data}
+          loading={nasState.loading}
+          error={nasState.error}
+          onRetry={() => void nasState.refetch()}
+        />
+
+        {groupedDevices.other.length > 0 ? (
+          <DeviceGroupCard
+            title="其他设备"
+            os="linux"
+            devices={groupedDevices.other}
+            loading={devicesState.loading}
+            error={devicesState.error}
+            data={devicesState.data}
+            onRetry={() => void devicesState.refetch()}
+          />
+        ) : null}
+      </CardGrid>
+
+      {/* 底部双栏：VPS 最近到期 + 影视下载概况 */}
+      <CardGrid columns={2}>
+        <VpsNearestSection
+          data={vpsState.data}
+          loading={vpsState.loading}
+          error={vpsState.error}
+          onRetry={() => void vpsState.refetch()}
+        />
+
+        <SectionCard
+          icon={Film}
+          title="影视下载概况"
+          subtitle="仅统计影视下载（qB）与保种（TR）及 MoviePilot，不含刷流"
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                to="/brush"
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              >
+                <Flame className="size-3.5 text-amber-500" aria-hidden="true" />
+                <span>刷流</span>
+              </Link>
+              <Link to="/seeding" className="text-xs font-medium text-primary hover:underline">
+                下载器
+              </Link>
+              <Link
+                to="/media"
+                className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline"
+              >
+                <span>影视</span>
+                <ChevronRight className="size-3.5" aria-hidden="true" />
+              </Link>
+            </div>
+          }
+        >
+          {mediaInitialLoading ? (
+            <LoadingState
+              variant="skeleton"
+              rows={2}
+              columns={2}
+              compact
+              message="正在加载影视下载概况..."
+            />
+          ) : mediaUnconfigured ? (
+            <EmptyState
+              compact
+              hideIcon
+              title="尚未配置影视或下载器"
+              description="请前往设置页配置 MoviePilot 或添加 download / seed 下载器"
+              action={
+                <Link
+                  to="/settings"
+                  className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-xs transition-colors hover:bg-primary/90"
+                >
+                  前往设置
+                </Link>
+              }
+            />
+          ) : (
+            <div className="space-y-4">
+              {downloadersState.error && !downloadersState.data ? (
+                <ErrorState
+                  compact
+                  title="获取下载器概况失败"
+                  message={downloadersState.error.message}
+                  onRetry={() => void downloadersState.refetch()}
+                />
+              ) : null}
+
+              {mpState.error && !mpState.data ? (
+                <ErrorState
+                  compact
+                  title="获取 MoviePilot 概况失败"
+                  message={mpState.error.message}
+                  onRetry={() => void mpState.refetch()}
+                />
+              ) : null}
+
+              {mediaOverview.hasDownloaders || mediaOverview.hasMoviepilot ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Link
+                      to="/media"
+                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <DataCard
+                        compact
+                        interactive
+                        className="h-full"
+                        title="正在下载"
+                        value={mediaOverview.downloadingCount}
+                        icon={Download}
+                        iconClassName="text-sky-500"
+                        footer={
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowDown className="size-3 text-sky-500" aria-hidden="true" />
+                            <span>下载 {formatSpeed(mediaOverview.downloadSpeed)}</span>
+                          </span>
+                        }
+                      />
+                    </Link>
+
+                    <Link
+                      to="/seeding"
+                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <DataCard
+                        compact
+                        interactive
+                        className="h-full"
+                        title="保种数"
+                        value={mediaOverview.seedingCount ?? '—'}
+                        icon={HardDrive}
+                        iconClassName="text-emerald-500"
+                        footer={
+                          <span className="inline-flex items-center gap-1">
+                            <ArrowUp className="size-3 text-emerald-500" aria-hidden="true" />
+                            <span>上传 {formatSpeed(mediaOverview.uploadSpeed)}</span>
+                          </span>
+                        }
+                      />
+                    </Link>
+
+                    <Link
+                      to="/media"
+                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <DataCard
+                        compact
+                        interactive
+                        className="h-full"
+                        title="待整理"
+                        value={mediaOverview.pendingTransfer ?? '—'}
+                        icon={Layers}
+                        iconClassName="text-amber-500"
+                        footer={
+                          mpState.data?.configured && !mpState.data.online
+                            ? 'MoviePilot 离线'
+                            : mediaOverview.pendingTransfer === null
+                              ? '整理队列暂不可用'
+                              : 'MoviePilot 待整理队列'
+                        }
+                      />
+                    </Link>
+
+                    <Link
+                      to="/media?tab=subscriptions"
+                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <DataCard
+                        compact
+                        interactive
+                        className="h-full"
+                        title="影视订阅"
+                        value={mediaOverview.subscribesCount ?? '—'}
+                        icon={Film}
+                        footer={
+                          mpState.data?.configured
+                            ? mpState.data.online
+                              ? 'MoviePilot 追剧订阅'
+                              : (mpState.data.error ?? 'MoviePilot 连接失败')
+                            : '未配置 MoviePilot'
+                        }
+                      />
+                    </Link>
+                  </div>
+
+                  {mediaOverview.mediaInstances.length > 0 ? (
+                    <div className="space-y-2 border-t border-border/60 pt-3">
+                      <div className="text-xs font-medium text-muted-foreground">
+                        影视下载与保种实例
+                      </div>
+                      <div className="space-y-1.5">
+                        {mediaOverview.mediaInstances.map((inst) => (
+                          <Link
+                            key={inst.id}
+                            to={`/seeding/${encodeURIComponent(inst.id)}`}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs transition-colors hover:border-primary/40"
+                          >
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <DownloaderTypeBadge type={inst.type} />
+                              <span className="truncate font-medium text-foreground">
+                                {inst.name}
+                              </span>
+                              {inst.tags.map((tag) => (
+                                <DownloaderTagBadge key={tag} tag={tag} />
+                              ))}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2 text-muted-foreground tabular-nums">
+                              {inst.online ? (
+                                <span>
+                                  ↓ {formatSpeed(inst.dlSpeed)} · ↑ {formatSpeed(inst.upSpeed)}
+                                </span>
+                              ) : null}
+                              <StatusBadge size="sm" status={inst.online ? 'online' : 'offline'} />
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          )}
+        </SectionCard>
+      </CardGrid>
     </div>
   );
 }

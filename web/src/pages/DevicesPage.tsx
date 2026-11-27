@@ -12,18 +12,24 @@ import {
   RotateCw,
   Trash2,
 } from 'lucide-react';
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from '@/components/common';
+import {
+  CardGrid,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  ProgressBar,
+  SectionCard,
+  StatusBadge,
+} from '@/components/common';
 import { DeviceOsIcon } from '@/components/devices/DeviceOsIcon';
 import {
   formatBytes,
   formatDateTime,
   formatUptime,
-  getBarColorClass,
   getOsLabel,
-  getUsageLevel,
 } from '@/components/devices/device-utils';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApi } from '@/hooks/useApi';
@@ -65,33 +71,6 @@ const EMPTY_FORM: DeviceFormValues = {
   enabled: true,
   note: '',
 };
-
-interface UsageBarProps {
-  label: string;
-  percent: number;
-}
-
-function UsageBar({ label, percent }: UsageBarProps) {
-  const clamped = Math.min(100, Math.max(0, percent));
-  const level = getUsageLevel(clamped);
-
-  return (
-    <div
-      role="progressbar"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={clamped}
-      data-level={level}
-      className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
-    >
-      <div
-        className={cn('h-full rounded-full transition-all', getBarColorClass(clamped))}
-        style={{ width: `${clamped}%` }}
-      />
-    </div>
-  );
-}
 
 function toDeviceInput(device: DeviceRecord): DeviceInput {
   return {
@@ -480,176 +459,159 @@ export function DevicesPage() {
           ) : null}
 
           {formOpen && !isReadonly ? (
-            <Card>
-              <CardHeader className="pb-4">
-                <CardTitle className="text-base">
-                  {editingIndex !== null ? '编辑家用设备' : '添加家用设备'}
-                </CardTitle>
-                <CardDescription>
-                  仅支持通过服务器本地 SSH 私钥进行只读状态采集，不提供私钥上传或远程修改操作。
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={(e) => void handleSaveForm(e)} className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="device-name">名称 *</Label>
-                      <Input
-                        id="device-name"
-                        value={formValues.name}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, name: e.target.value }))
-                        }
-                        placeholder="例如：书房 Mac mini"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="device-host">主机 *</Label>
-                      <Input
-                        id="device-host"
-                        value={formValues.host}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, host: e.target.value }))
-                        }
-                        placeholder="例如：192.0.2.21 或 demo-mac.local"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="device-port">端口</Label>
-                      <Input
-                        id="device-port"
-                        type="number"
-                        min="1"
-                        max="65535"
-                        value={formValues.port}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, port: e.target.value }))
-                        }
-                        placeholder="22"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="device-user">用户 *</Label>
-                      <Input
-                        id="device-user"
-                        value={formValues.user}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, user: e.target.value }))
-                        }
-                        placeholder="例如：demo"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="device-os">系统</Label>
-                      <select
-                        id="device-os"
-                        value={formValues.os}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({
-                            ...prev,
-                            os: e.target.value as DeviceOsConfig,
-                          }))
-                        }
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                      >
-                        <option value="auto">自动识别</option>
-                        <option value="windows">Windows</option>
-                        <option value="macos">macOS</option>
-                        <option value="linux">Linux</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="device-note">备注</Label>
-                      <Input
-                        id="device-note"
-                        value={formValues.note}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, note: e.target.value }))
-                        }
-                        placeholder="可选备注信息"
-                      />
-                    </div>
-                  </div>
-
+            <SectionCard
+              title={editingIndex !== null ? '编辑家用设备' : '添加家用设备'}
+              subtitle="仅支持通过服务器本地 SSH 私钥进行只读状态采集，不提供私钥上传或远程修改操作。"
+            >
+              <form onSubmit={(e) => void handleSaveForm(e)} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="space-y-1.5">
-                    <Label htmlFor="device-keyPath">密钥路径 *</Label>
+                    <Label htmlFor="device-name">名称 *</Label>
                     <Input
-                      id="device-keyPath"
-                      value={formValues.keyPath}
-                      onChange={(e) =>
-                        setFormValues((prev) => ({ ...prev, keyPath: e.target.value }))
-                      }
-                      placeholder="./secrets/demo_id_ed25519"
+                      id="device-name"
+                      value={formValues.name}
+                      onChange={(e) => setFormValues((prev) => ({ ...prev, name: e.target.value }))}
+                      placeholder="例如：书房 Mac mini"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      填写服务器上私钥文件的路径，不会上传或显示私钥
-                    </p>
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="device-enabled"
-                      type="checkbox"
-                      checked={formValues.enabled}
-                      onChange={(e) =>
-                        setFormValues((prev) => ({ ...prev, enabled: e.target.checked }))
-                      }
-                      className="size-4 rounded border-input accent-primary"
+                  <div className="space-y-1.5">
+                    <Label htmlFor="device-host">主机 *</Label>
+                    <Input
+                      id="device-host"
+                      value={formValues.host}
+                      onChange={(e) => setFormValues((prev) => ({ ...prev, host: e.target.value }))}
+                      placeholder="例如：192.0.2.21 或 demo-mac.local"
                     />
-                    <Label htmlFor="device-enabled" className="cursor-pointer font-normal">
-                      启用此设备状态采集
-                    </Label>
                   </div>
-
-                  {formError ? (
-                    <p role="alert" className="text-sm text-destructive">
-                      {formError}
-                    </p>
-                  ) : null}
-
-                  {testResult ? (
-                    <div
-                      role="status"
-                      className={cn(
-                        'rounded-lg border px-3 py-2 text-sm',
-                        testResult.ok
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                          : 'border-destructive/40 bg-destructive/10 text-destructive',
-                      )}
-                    >
-                      {testResult.ok
-                        ? `连接测试成功：识别系统 ${getOsLabel(testResult.os ?? 'unknown')}（耗时 ${testResult.durationMs} ms）`
-                        : `连接测试失败：${testResult.error ?? '请检查配置'}（耗时 ${testResult.durationMs} ms）`}
-                    </div>
-                  ) : null}
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void handleTestConnection()}
-                      disabled={testing || saving}
-                    >
-                      <PlugZap className="size-4" aria-hidden="true" />
-                      <span>{testing ? '测试中...' : '测试连接'}</span>
-                    </Button>
-                    <Button type="submit" size="sm" disabled={saving || testing}>
-                      {saving ? '保存中...' : '保存'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={closeForm}
-                      disabled={saving || testing}
-                    >
-                      取消
-                    </Button>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="device-port">端口</Label>
+                    <Input
+                      id="device-port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      value={formValues.port}
+                      onChange={(e) => setFormValues((prev) => ({ ...prev, port: e.target.value }))}
+                      placeholder="22"
+                    />
                   </div>
-                </form>
-              </CardContent>
-            </Card>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="device-user">用户 *</Label>
+                    <Input
+                      id="device-user"
+                      value={formValues.user}
+                      onChange={(e) => setFormValues((prev) => ({ ...prev, user: e.target.value }))}
+                      placeholder="例如：demo"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="device-os">系统</Label>
+                    <select
+                      id="device-os"
+                      value={formValues.os}
+                      onChange={(e) =>
+                        setFormValues((prev) => ({
+                          ...prev,
+                          os: e.target.value as DeviceOsConfig,
+                        }))
+                      }
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      <option value="auto">自动识别</option>
+                      <option value="windows">Windows</option>
+                      <option value="macos">macOS</option>
+                      <option value="linux">Linux</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="device-note">备注</Label>
+                    <Input
+                      id="device-note"
+                      value={formValues.note}
+                      onChange={(e) => setFormValues((prev) => ({ ...prev, note: e.target.value }))}
+                      placeholder="可选备注信息"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="device-keyPath">密钥路径 *</Label>
+                  <Input
+                    id="device-keyPath"
+                    value={formValues.keyPath}
+                    onChange={(e) =>
+                      setFormValues((prev) => ({ ...prev, keyPath: e.target.value }))
+                    }
+                    placeholder="./secrets/demo_id_ed25519"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    填写服务器上私钥文件的路径，不会上传或显示私钥
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    id="device-enabled"
+                    type="checkbox"
+                    checked={formValues.enabled}
+                    onChange={(e) =>
+                      setFormValues((prev) => ({ ...prev, enabled: e.target.checked }))
+                    }
+                    className="size-4 rounded border-input accent-primary"
+                  />
+                  <Label htmlFor="device-enabled" className="cursor-pointer font-normal">
+                    启用此设备状态采集
+                  </Label>
+                </div>
+
+                {formError ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {formError}
+                  </p>
+                ) : null}
+
+                {testResult ? (
+                  <div
+                    role="status"
+                    className={cn(
+                      'rounded-lg border px-3 py-2 text-sm',
+                      testResult.ok
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                        : 'border-destructive/40 bg-destructive/10 text-destructive',
+                    )}
+                  >
+                    {testResult.ok
+                      ? `连接测试成功：识别系统 ${getOsLabel(testResult.os ?? 'unknown')}（耗时 ${testResult.durationMs} ms）`
+                      : `连接测试失败：${testResult.error ?? '请检查配置'}（耗时 ${testResult.durationMs} ms）`}
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleTestConnection()}
+                    disabled={testing || saving}
+                  >
+                    <PlugZap className="size-4" aria-hidden="true" />
+                    <span>{testing ? '测试中...' : '测试连接'}</span>
+                  </Button>
+                  <Button type="submit" size="sm" disabled={saving || testing}>
+                    {saving ? '保存中...' : '保存'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={closeForm}
+                    disabled={saving || testing}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </form>
+            </SectionCard>
           ) : null}
 
           {cardModels.length === 0 ? (
@@ -671,7 +633,7 @@ export function DevicesPage() {
               }
             />
           ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <CardGrid columns={2}>
               {cardModels.map((model, index) => {
                 const { record, statusItem, enabled } = model;
                 const osType = resolveCardOs(record, statusItem);
@@ -680,241 +642,233 @@ export function DevicesPage() {
                 const osVersionText = statusItem?.data?.osVersion ?? getOsLabel(osType);
 
                 return (
-                  <Card key={model.id} className="flex flex-col justify-between">
-                    <CardHeader className="space-y-3 pb-3">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="flex min-w-0 items-start gap-2.5">
-                          <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                            <DeviceOsIcon os={osType} className="size-4" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <CardTitle className="truncate text-base">{model.name}</CardTitle>
-                              {!enabled ? (
-                                <StatusBadge status="unconfigured" label="已停用" />
-                              ) : (
-                                <StatusBadge
-                                  status={statusItem?.online ? 'success' : 'error'}
-                                  label={statusItem?.online ? '在线' : '离线'}
-                                />
-                              )}
-                              {enabled && statusItem ? (
-                                <StatusBadge
-                                  status={statusItem.cached ? 'info' : 'configured'}
-                                  label={statusItem.cached ? '已缓存' : '实时采集'}
-                                  showDot={false}
-                                />
-                              ) : null}
-                            </div>
-                            <CardDescription className="mt-1 truncate">
-                              {osVersionText}
-                              {record?.note ? ` · ${record.note}` : ''}
-                            </CardDescription>
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-1">
-                          {enabled ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              aria-label={`刷新 ${model.name}`}
-                              onClick={() => void handleRefreshSingle(model.id)}
-                              disabled={isCardRefreshing || refreshingAll || saving}
-                            >
-                              <RotateCw
-                                className={isCardRefreshing ? 'size-3.5 animate-spin' : 'size-3.5'}
-                                aria-hidden="true"
-                              />
-                              <span>刷新</span>
-                            </Button>
-                          ) : null}
-
-                          {canEdit && record ? (
-                            isConfirmingDelete ? (
-                              <div className="inline-flex items-center gap-1">
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  size="sm"
-                                  onClick={() => void handleDelete(index)}
-                                  disabled={saving}
-                                >
-                                  确认删除
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setConfirmDeleteId(null)}
-                                  disabled={saving}
-                                >
-                                  取消
-                                </Button>
-                              </div>
-                            ) : (
-                              <>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  aria-label={`编辑 ${model.name}`}
-                                  onClick={() => openEditForm(index, record)}
-                                  disabled={saving}
-                                >
-                                  <Pencil className="size-3.5" aria-hidden="true" />
-                                  <span>编辑</span>
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  aria-label={`删除 ${model.name}`}
-                                  onClick={() => setConfirmDeleteId(model.id)}
-                                  disabled={saving}
-                                >
-                                  <Trash2 className="size-3.5" aria-hidden="true" />
-                                  <span>删除</span>
-                                </Button>
-                              </>
-                            )
-                          ) : null}
-                        </div>
+                  <SectionCard
+                    key={model.id}
+                    leading={
+                      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                        <DeviceOsIcon os={osType} className="size-4" />
                       </div>
-                    </CardHeader>
+                    }
+                    title={model.name}
+                    titleClassName="truncate"
+                    titleExtra={
+                      <>
+                        {!enabled ? (
+                          <StatusBadge status="unconfigured" label="已停用" />
+                        ) : (
+                          <StatusBadge status={statusItem?.online ? 'online' : 'offline'} />
+                        )}
+                        {enabled && statusItem ? (
+                          <StatusBadge
+                            status={statusItem.cached ? 'info' : 'configured'}
+                            label={statusItem.cached ? '已缓存' : '实时采集'}
+                            showDot={false}
+                          />
+                        ) : null}
+                      </>
+                    }
+                    subtitle={
+                      <span className="block truncate">
+                        {osVersionText}
+                        {record?.note ? ` · ${record.note}` : ''}
+                      </span>
+                    }
+                    actions={
+                      <div className="flex shrink-0 items-center gap-1">
+                        {enabled ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`刷新 ${model.name}`}
+                            onClick={() => void handleRefreshSingle(model.id)}
+                            disabled={isCardRefreshing || refreshingAll || saving}
+                          >
+                            <RotateCw
+                              className={isCardRefreshing ? 'size-3.5 animate-spin' : 'size-3.5'}
+                              aria-hidden="true"
+                            />
+                            <span>刷新</span>
+                          </Button>
+                        ) : null}
 
-                    <CardContent className="space-y-4">
-                      {!enabled ? (
-                        <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground">
-                          此设备已停用，暂不进行只读状态采集
-                        </div>
-                      ) : !statusItem ? (
-                        <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-6 text-center text-sm text-muted-foreground">
-                          暂无采集状态，请点击刷新
-                        </div>
-                      ) : !statusItem.online || !statusItem.data ? (
-                        <ErrorState
-                          title="设备离线或采集失败"
-                          message={statusItem.error ?? '无法获取设备运行状态'}
-                          onRetry={() => void handleRefreshSingle(model.id)}
-                          className="py-6"
-                        />
-                      ) : (
-                        <>
-                          <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/40 px-3 py-2.5 text-xs sm:grid-cols-3">
-                            <div>
-                              <span className="text-muted-foreground">主机名</span>
-                              <p className="truncate font-medium text-foreground">
-                                {statusItem.data.hostname}
-                              </p>
+                        {canEdit && record ? (
+                          isConfirmingDelete ? (
+                            <div className="inline-flex items-center gap-1">
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => void handleDelete(index)}
+                                disabled={saving}
+                              >
+                                确认删除
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setConfirmDeleteId(null)}
+                                disabled={saving}
+                              >
+                                取消
+                              </Button>
                             </div>
-                            <div>
-                              <span className="flex items-center gap-1 text-muted-foreground">
-                                <Clock className="size-3" aria-hidden="true" />
-                                <span>开机时长</span>
-                              </span>
-                              <p className="font-medium text-foreground">
-                                {formatUptime(statusItem.data.uptimeSeconds)}
-                              </p>
-                            </div>
-                            <div className="col-span-2 sm:col-span-1">
-                              <span className="text-muted-foreground">系统</span>
-                              <p className="font-medium text-foreground">
-                                {getOsLabel(statusItem.data.os)}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between gap-2 text-sm">
-                                <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-                                  <Cpu className="size-3.5 shrink-0" aria-hidden="true" />
-                                  <span className="truncate">
-                                    {statusItem.data.cpu.model}
-                                    {statusItem.data.cpu.cores > 0
-                                      ? ` (${statusItem.data.cpu.cores} 核)`
-                                      : ''}
-                                  </span>
-                                </span>
-                                <span className="shrink-0 font-medium text-foreground">
-                                  {statusItem.data.cpu.loadPercent}%
-                                </span>
-                              </div>
-                              <UsageBar
-                                label={`${model.name} CPU 使用率`}
-                                percent={statusItem.data.cpu.loadPercent}
-                              />
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between gap-2 text-sm">
-                                <span className="flex items-center gap-1.5 text-muted-foreground">
-                                  <MemoryStick className="size-3.5" aria-hidden="true" />
-                                  <span>内存</span>
-                                </span>
-                                <span className="font-medium text-foreground">
-                                  {formatBytes(statusItem.data.memory.usedBytes)} /{' '}
-                                  {formatBytes(statusItem.data.memory.totalBytes)} (
-                                  {statusItem.data.memory.usedPercent}%)
-                                </span>
-                              </div>
-                              <UsageBar
-                                label={`${model.name} 内存使用率`}
-                                percent={statusItem.data.memory.usedPercent}
-                              />
-                            </div>
-
-                            <div className="space-y-2 border-t border-border/60 pt-2">
-                              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                                <HardDrive className="size-3.5" aria-hidden="true" />
-                                <span>磁盘空间</span>
-                              </div>
-                              {statusItem.data.disks.length === 0 ? (
-                                <p className="text-xs text-muted-foreground">未检测到本地磁盘</p>
-                              ) : (
-                                statusItem.data.disks.map((disk) => {
-                                  const usedBytes = Math.max(0, disk.totalBytes - disk.freeBytes);
-                                  const diskTitle = disk.label
-                                    ? `${disk.mount} (${disk.label})`
-                                    : disk.mount;
-                                  return (
-                                    <div key={disk.mount} className="space-y-1">
-                                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                                        <span className="font-medium text-foreground">
-                                          {diskTitle}
-                                        </span>
-                                        <span className="text-muted-foreground">
-                                          已用 {formatBytes(usedBytes)} /{' '}
-                                          {formatBytes(disk.totalBytes)}（可用{' '}
-                                          {formatBytes(disk.freeBytes)}，{disk.usedPercent}%）
-                                        </span>
-                                      </div>
-                                      <UsageBar
-                                        label={`${model.name} ${disk.mount} 磁盘使用率`}
-                                        percent={disk.usedPercent}
-                                      />
-                                    </div>
-                                  );
-                                })
-                              )}
-                            </div>
-                          </div>
-                        </>
-                      )}
-
-                      {statusItem ? (
-                        <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                          ) : (
+                            <>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`编辑 ${model.name}`}
+                                onClick={() => openEditForm(index, record)}
+                                disabled={saving}
+                              >
+                                <Pencil className="size-3.5" aria-hidden="true" />
+                                <span>编辑</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`删除 ${model.name}`}
+                                onClick={() => setConfirmDeleteId(model.id)}
+                                disabled={saving}
+                              >
+                                <Trash2 className="size-3.5" aria-hidden="true" />
+                                <span>删除</span>
+                              </Button>
+                            </>
+                          )
+                        ) : null}
+                      </div>
+                    }
+                    footer={
+                      statusItem ? (
+                        <div className="flex w-full items-center justify-between border-t border-border/60 pt-2">
                           <span>刷新时间：{formatDateTime(statusItem.checkedAt)}</span>
                           <span>{statusItem.cached ? '命中缓存' : '实时采集'}</span>
                         </div>
-                      ) : null}
-                    </CardContent>
-                  </Card>
+                      ) : undefined
+                    }
+                  >
+                    {!enabled ? (
+                      <EmptyState compact hideIcon title="此设备已停用，暂不进行只读状态采集" />
+                    ) : !statusItem ? (
+                      <EmptyState compact hideIcon title="暂无采集状态，请点击刷新" />
+                    ) : !statusItem.online || !statusItem.data ? (
+                      <ErrorState
+                        compact
+                        title="设备离线或采集失败"
+                        message={statusItem.error ?? '无法获取设备运行状态'}
+                        onRetry={() => void handleRefreshSingle(model.id)}
+                      />
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/40 px-3 py-2.5 text-xs sm:grid-cols-3">
+                          <div>
+                            <span className="text-muted-foreground">主机名</span>
+                            <p className="truncate font-medium text-foreground">
+                              {statusItem.data.hostname}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <Clock className="size-3" aria-hidden="true" />
+                              <span>开机时长</span>
+                            </span>
+                            <p className="font-medium text-foreground">
+                              {formatUptime(statusItem.data.uptimeSeconds)}
+                            </p>
+                          </div>
+                          <div className="col-span-2 sm:col-span-1">
+                            <span className="text-muted-foreground">系统</span>
+                            <p className="font-medium text-foreground">
+                              {getOsLabel(statusItem.data.os)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <ProgressBar
+                            ariaLabel={`${model.name} CPU 使用率`}
+                            label={
+                              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                                <Cpu className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span className="truncate">
+                                  {statusItem.data.cpu.model}
+                                  {statusItem.data.cpu.cores > 0
+                                    ? ` (${statusItem.data.cpu.cores} 核)`
+                                    : ''}
+                                </span>
+                              </span>
+                            }
+                            valueText={
+                              <span className="text-sm">{statusItem.data.cpu.loadPercent}%</span>
+                            }
+                            value={statusItem.data.cpu.loadPercent}
+                          />
+
+                          <ProgressBar
+                            ariaLabel={`${model.name} 内存使用率`}
+                            label={
+                              <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                                <MemoryStick className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span>内存</span>
+                              </span>
+                            }
+                            valueText={
+                              <span className="text-sm">
+                                {formatBytes(statusItem.data.memory.usedBytes)} /{' '}
+                                {formatBytes(statusItem.data.memory.totalBytes)} (
+                                {statusItem.data.memory.usedPercent}%)
+                              </span>
+                            }
+                            value={statusItem.data.memory.usedPercent}
+                          />
+
+                          <div className="space-y-2 border-t border-border/60 pt-2">
+                            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                              <HardDrive className="size-3.5" aria-hidden="true" />
+                              <span>磁盘空间</span>
+                            </div>
+                            {statusItem.data.disks.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">未检测到本地磁盘</p>
+                            ) : (
+                              statusItem.data.disks.map((disk) => {
+                                const usedBytes = Math.max(0, disk.totalBytes - disk.freeBytes);
+                                const diskTitle = disk.label
+                                  ? `${disk.mount} (${disk.label})`
+                                  : disk.mount;
+                                return (
+                                  <ProgressBar
+                                    key={disk.mount}
+                                    ariaLabel={`${model.name} ${disk.mount} 磁盘使用率`}
+                                    label={
+                                      <span className="font-medium text-foreground">
+                                        {diskTitle}
+                                      </span>
+                                    }
+                                    valueText={
+                                      <span className="font-normal text-muted-foreground">
+                                        已用 {formatBytes(usedBytes)} /{' '}
+                                        {formatBytes(disk.totalBytes)}（可用{' '}
+                                        {formatBytes(disk.freeBytes)}，{disk.usedPercent}%）
+                                      </span>
+                                    }
+                                    value={disk.usedPercent}
+                                  />
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </SectionCard>
                 );
               })}
-            </div>
+            </CardGrid>
           )}
         </>
       )}

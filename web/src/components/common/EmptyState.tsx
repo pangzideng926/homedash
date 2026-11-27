@@ -6,7 +6,9 @@ export interface EmptyStateProps {
   title: string;
   description?: string;
   icon?: LucideIcon;
+  hideIcon?: boolean;
   action?: ReactNode;
+  compact?: boolean;
   className?: string;
 }
 
@@ -14,24 +16,38 @@ export function EmptyState({
   title,
   description,
   icon: Icon = Inbox,
+  hideIcon = false,
   action,
+  compact = false,
   className,
 }: EmptyStateProps) {
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 px-6 py-12 text-center',
+        'flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 text-center',
+        compact ? 'px-4 py-6' : 'px-6 py-12',
         className,
       )}
     >
-      <div className="mb-3 flex size-11 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-        <Icon className="size-5" aria-hidden="true" />
-      </div>
-      <h3 className="text-base font-medium text-foreground">{title}</h3>
-      {description ? (
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">{description}</p>
+      {!hideIcon ? (
+        <div
+          className={cn(
+            'flex items-center justify-center rounded-lg bg-muted text-muted-foreground',
+            compact ? 'mb-2 size-9' : 'mb-3 size-11',
+          )}
+        >
+          <Icon className={compact ? 'size-4' : 'size-5'} aria-hidden="true" />
+        </div>
       ) : null}
-      {action ? <div className="mt-4">{action}</div> : null}
+      <h3 className={cn('font-medium text-foreground', compact ? 'text-sm' : 'text-base')}>
+        {title}
+      </h3>
+      {description ? (
+        <p className={cn('mt-1 max-w-md text-muted-foreground', compact ? 'text-xs' : 'text-sm')}>
+          {description}
+        </p>
+      ) : null}
+      {action ? <div className={compact ? 'mt-3' : 'mt-4'}>{action}</div> : null}
     </div>
   );
 }

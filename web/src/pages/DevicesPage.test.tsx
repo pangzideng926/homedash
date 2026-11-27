@@ -219,7 +219,7 @@ describe('DevicesPage 家用设备页', () => {
   });
 
   it('支持添加、测试连接、编辑保存与删除，且提示不上传或显示私钥', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     let currentDevices = [...SAMPLE_LIST.devices];
 
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

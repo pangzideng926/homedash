@@ -1,3 +1,8 @@
+import {
+  getProgressBarColorClass,
+  getProgressLevel,
+  type ProgressLevel,
+} from '@/components/common/progress-utils';
 import type { DetectedOs, DeviceOsConfig } from '@/lib/api';
 
 export function getOsLabel(os: DetectedOs | DeviceOsConfig): string {
@@ -61,15 +66,10 @@ export function formatDateTime(iso: string): string {
   return date.toLocaleString('zh-CN', { hour12: false });
 }
 
-export function getUsageLevel(percent: number): 'danger' | 'warning' | 'normal' {
-  if (percent >= 90) return 'danger';
-  if (percent >= 75) return 'warning';
-  return 'normal';
+export function getUsageLevel(percent: number): ProgressLevel {
+  return getProgressLevel(percent);
 }
 
 export function getBarColorClass(percent: number): string {
-  const level = getUsageLevel(percent);
-  if (level === 'danger') return 'bg-red-500';
-  if (level === 'warning') return 'bg-amber-500';
-  return 'bg-emerald-500';
+  return getProgressBarColorClass(percent);
 }

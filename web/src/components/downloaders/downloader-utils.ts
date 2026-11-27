@@ -10,21 +10,25 @@ import type {
 export const DOWNLOADER_TAG_OPTIONS: ReadonlyArray<{
   value: DownloaderTag;
   label: string;
+  status: StatusVariant;
   className: string;
 }> = [
   {
     value: 'download',
     label: '下载',
+    status: 'info',
     className: 'border-sky-500/25 bg-sky-500/15 text-sky-700 dark:text-sky-400',
   },
   {
     value: 'brush',
     label: '刷流',
+    status: 'warning',
     className: 'border-amber-500/25 bg-amber-500/15 text-amber-700 dark:text-amber-400',
   },
   {
     value: 'seed',
     label: '保种',
+    status: 'success',
     className: 'border-emerald-500/25 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
   },
 ];

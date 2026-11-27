@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -74,7 +74,7 @@ describe('homedash 前端认证与控制台', () => {
   });
 
   it('登录成功后自动回跳到 redirect 指定的受保护页面', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     let loggedIn = false;
 
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -170,7 +170,7 @@ describe('homedash 前端认证与控制台', () => {
   });
 
   it('登录返回 429 时显示后端返回的中文限流提示', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith('/api/auth/me')) {
@@ -201,7 +201,7 @@ describe('homedash 前端认证与控制台', () => {
   });
 
   it('登录失败时显示“用户名或密码错误”提示', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith('/api/auth/me')) {
@@ -228,7 +228,7 @@ describe('homedash 前端认证与控制台', () => {
   });
 
   it('登录成功后进入控制台，展示总览卡片、占位页、404 页面并支持退出登录', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     let loggedIn = false;
 
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -360,24 +360,27 @@ describe('homedash 前端认证与控制台', () => {
 
     expect(await screen.findByRole('heading', { name: '总览' })).toBeInTheDocument();
     expect(screen.getByText('admin')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '影视' })).toHaveAttribute('href', '/media');
-    expect(screen.getByRole('link', { name: '刷流' })).toHaveAttribute('href', '/brush');
-    expect(screen.getByRole('link', { name: '下载器' })).toHaveAttribute('href', '/seeding');
-    expect(screen.getByText('NAS 状态')).toBeInTheDocument();
-    expect(screen.getByText('下载与做种', { selector: 'h3' })).toBeInTheDocument();
-    expect(screen.getByText('影视订阅')).toBeInTheDocument();
-    expect(screen.getByText('家用设备', { selector: 'h3' })).toBeInTheDocument();
-    expect(screen.getByText('VPS 到期')).toBeInTheDocument();
-    expect(screen.getByText('最近告警')).toBeInTheDocument();
-    expect(await screen.findByText('1 / 2 在线')).toBeInTheDocument();
-    expect(screen.getByText('客厅主机')).toBeInTheDocument();
-    expect(screen.getByText('书房 Mac')).toBeInTheDocument();
-    expect(screen.getByText(/CPU 25% · 内存 50%/)).toBeInTheDocument();
-    expect(await screen.findByText('2 台')).toBeInTheDocument();
-    expect(screen.getByText(/最近到期：香港节点/)).toBeInTheDocument();
-    expect(screen.getAllByText('未配置，去设置')).toHaveLength(3);
+    const sidebar = screen.getByTestId('desktop-sidebar');
+    expect(within(sidebar).getByRole('link', { name: '影视' })).toHaveAttribute('href', '/media');
+    expect(within(sidebar).getByRole('link', { name: '刷流' })).toHaveAttribute('href', '/brush');
+    expect(within(sidebar).getByRole('link', { name: '下载器' })).toHaveAttribute(
+      'href',
+      '/seeding',
+    );
+    expect(screen.getByRole('heading', { level: 3, name: '异常提示' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Windows' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Mac' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'NAS' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'VPS 最近到期' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: '影视下载概况' })).toBeInTheDocument();
+    expect(await screen.findByText('客厅主机')).toBeInTheDocument();
+    expect(screen.getAllByText('书房 Mac').length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText('香港节点')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('剩余 4 天')).toBeInTheDocument();
+    expect(screen.getByText('暂未配置 NAS')).toBeInTheDocument();
+    expect(screen.getByText('尚未配置影视或下载器')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('link', { name: 'NAS' }));
+    await user.click(within(sidebar).getByRole('link', { name: 'NAS' }));
     expect(await screen.findByText('尚未配置 NAS')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '退出登录' }));

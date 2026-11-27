@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
-import { StatusBadge } from '@/components/common';
+import { CardGrid, ProgressBar, StatusBadge } from '@/components/common';
 import { formatBytes, formatDateTime, formatSpeed } from '@/components/devices/device-utils';
 import {
   DownloaderTagBadge,
@@ -53,7 +53,7 @@ export function DownloaderInstancesSection({
       </div>
 
       {/* 实例卡片网格 */}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <CardGrid columns={3}>
         {instances.map((inst) => {
           const detailUrl = `/seeding/${encodeURIComponent(inst.id)}`;
           const activeTasks = inst.activeTasks ?? [];
@@ -89,10 +89,7 @@ export function DownloaderInstancesSection({
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
-                      <StatusBadge
-                        status={inst.online ? 'success' : 'error'}
-                        label={inst.online ? '在线' : '离线'}
-                      />
+                      <StatusBadge status={inst.online ? 'online' : 'offline'} />
                       <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
                     </div>
                   </div>
@@ -187,20 +184,14 @@ export function DownloaderInstancesSection({
                                 <DownloaderTaskStateBadge state={task.state} className="shrink-0" />
                               </div>
                               <div className="flex items-center gap-2">
-                                <div
-                                  role="progressbar"
-                                  aria-label={`${task.name} 进度`}
-                                  aria-valuemin={0}
-                                  aria-valuemax={100}
-                                  aria-valuenow={pct}
-                                  className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
-                                >
-                                  <div
-                                    className="h-full rounded-full bg-sky-500 transition-all"
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </div>
-                                <span className="w-10 shrink-0 text-right text-[11px] font-medium text-foreground">
+                                <ProgressBar
+                                  value={pct}
+                                  tone="info"
+                                  size="sm"
+                                  ariaLabel={`${task.name} 进度`}
+                                  className="flex-1"
+                                />
+                                <span className="w-10 shrink-0 text-right text-[11px] font-medium tabular-nums text-foreground">
                                   {pct}%
                                 </span>
                               </div>
@@ -236,7 +227,7 @@ export function DownloaderInstancesSection({
             </Card>
           );
         })}
-      </div>
+      </CardGrid>
     </div>
   );
 }

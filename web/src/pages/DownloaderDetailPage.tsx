@@ -9,7 +9,16 @@ import {
   Database,
   RotateCw,
 } from 'lucide-react';
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from '@/components/common';
+import {
+  CardGrid,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  PageHeader,
+  ProgressBar,
+  SectionCard,
+  StatusBadge,
+} from '@/components/common';
 import { formatBytes, formatDateTime, formatSpeed } from '@/components/devices/device-utils';
 import {
   DownloaderTagBadge,
@@ -22,7 +31,6 @@ import {
   getDownloaderTypeFullName,
 } from '@/components/downloaders/downloader-utils';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApi } from '@/hooks/useApi';
 import { fetchDownloaderDetail } from '@/lib/api';
 
@@ -121,7 +129,7 @@ export function DownloaderDetailPage() {
             {data.tags.map((tag) => (
               <DownloaderTagBadge key={tag} tag={tag} />
             ))}
-            <StatusBadge status="success" label="在线" />
+            <StatusBadge status="online" />
             {data.version ? (
               <StatusBadge status="info" label={`版本 ${data.version}`} showDot={false} />
             ) : null}
@@ -129,22 +137,19 @@ export function DownloaderDetailPage() {
             <span>最近采集：{formatDateTime(data.checkedAt)}</span>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <ArrowUpDown className="size-4 text-muted-foreground" aria-hidden="true" />
-                  <span>实时传输速度</span>
-                </CardTitle>
-                <CardDescription>当前实例实时上传与下载速率</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2">
+          <CardGrid columns={2}>
+            <SectionCard
+              icon={ArrowUpDown}
+              title="实时传输速度"
+              subtitle="当前实例实时上传与下载速率"
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-lg bg-muted/40 p-3">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <ArrowUp className="size-3.5 text-emerald-500" aria-hidden="true" />
                     <span>实时上传</span>
                   </div>
-                  <div className="mt-1 text-xl font-semibold text-foreground">
+                  <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">
                     {formatSpeed(data.upSpeed)}
                   </div>
                 </div>
@@ -153,60 +158,54 @@ export function DownloaderDetailPage() {
                     <ArrowDown className="size-3.5 text-sky-500" aria-hidden="true" />
                     <span>实时下载</span>
                   </div>
-                  <div className="mt-1 text-xl font-semibold text-foreground">
+                  <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">
                     {formatSpeed(data.dlSpeed)}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </SectionCard>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Database className="size-4 text-muted-foreground" aria-hidden="true" />
-                    <span>累计流量与总体积</span>
-                  </CardTitle>
-                  {data.totalsApproximate ? (
-                    <StatusBadge status="warning" label="按种子累计近似" showDot={false} />
-                  ) : null}
-                </div>
-                <CardDescription>累计上传/下载、分享率与当前种子总体积</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-4">
+            <SectionCard
+              icon={Database}
+              title="累计流量与总体积"
+              subtitle="累计上传/下载、分享率与当前种子总体积"
+              actions={
+                data.totalsApproximate ? (
+                  <StatusBadge status="warning" label="按种子累计近似" showDot={false} />
+                ) : undefined
+              }
+            >
+              <div className="grid gap-3 sm:grid-cols-4">
                 <div className="rounded-lg bg-muted/40 p-3">
                   <div className="text-xs text-muted-foreground">累计上传</div>
-                  <div className="mt-1 text-sm font-semibold text-foreground">
+                  <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                     {formatBytes(data.totalUploaded ?? 0)}
                   </div>
                 </div>
                 <div className="rounded-lg bg-muted/40 p-3">
                   <div className="text-xs text-muted-foreground">累计下载</div>
-                  <div className="mt-1 text-sm font-semibold text-foreground">
+                  <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                     {formatBytes(data.totalDownloaded ?? 0)}
                   </div>
                 </div>
                 <div className="rounded-lg bg-muted/40 p-3">
                   <div className="text-xs text-muted-foreground">分享率</div>
-                  <div className="mt-1 text-sm font-semibold text-foreground">
+                  <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                     {(data.ratio ?? 0).toFixed(2)}
                   </div>
                 </div>
                 <div className="rounded-lg bg-muted/40 p-3">
                   <div className="text-xs text-muted-foreground">种子总体积</div>
-                  <div className="mt-1 text-sm font-semibold text-foreground">
+                  <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                     {formatBytes(data.totalSize)}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+            </SectionCard>
+          </CardGrid>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">种子状态分布（共 {data.counts.total} 个）</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2.5">
+          <SectionCard title={`种子状态分布（共 ${data.counts.total} 个）`}>
+            <div className="flex flex-wrap gap-2.5">
               <StatusBadge status="success" label={`做种中 ${data.counts.seeding}`} />
               <StatusBadge status="info" label={`下载中 ${data.counts.downloading}`} />
               <StatusBadge status="unknown" label={`已暂停 ${data.counts.paused}`} />
@@ -218,19 +217,13 @@ export function DownloaderDetailPage() {
                 status={data.counts.error > 0 ? 'error' : 'unknown'}
                 label={`出错 ${data.counts.error}`}
               />
-            </CardContent>
-          </Card>
+            </div>
+          </SectionCard>
 
-          <Card>
-            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-3">
-              <div>
-                <CardTitle className="text-base">
-                  进行中的任务（共 {data.activeTotal ?? data.activeTasks?.length ?? 0} 个）
-                </CardTitle>
-                <CardDescription>
-                  仅展示正在下载、速度大于 0 的做种或出错任务（只读，按出错与速度排序）
-                </CardDescription>
-              </div>
+          <SectionCard
+            title={`进行中的任务（共 ${data.activeTotal ?? data.activeTasks?.length ?? 0} 个）`}
+            subtitle="仅展示正在下载、速度大于 0 的做种或出错任务（只读，按出错与速度排序）"
+            actions={
               <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
                 {ACTIVE_LIMIT_OPTIONS.map((limitOption) => (
                   <Button
@@ -244,93 +237,82 @@ export function DownloaderDetailPage() {
                   </Button>
                 ))}
               </div>
-            </CardHeader>
-            <CardContent>
-              {(data.activeTasks ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground">暂无进行中的任务</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-muted-foreground">
-                        <th className="py-2 pr-4 font-medium">任务名称</th>
-                        <th className="py-2 pr-4 font-medium">状态</th>
-                        <th className="py-2 pr-4 font-medium">进度</th>
-                        <th className="py-2 pr-4 font-medium">下载速度</th>
-                        <th className="py-2 pr-4 font-medium">上传速度</th>
-                        <th className="py-2 pr-4 font-medium">剩余时间</th>
-                        <th className="py-2 pr-4 font-medium">体积</th>
-                        <th className="py-2 pr-4 font-medium">分享率</th>
-                        <th className="py-2 font-medium">{secondaryColumnName}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {(data.activeTasks ?? []).map((task, idx) => {
-                        const pct = formatTaskProgressPercent(task.progress);
-                        const groupVal = isQb ? task.category : task.label;
-                        return (
-                          <tr key={`${task.name}-${idx}`}>
-                            <td
-                              className="max-w-xs truncate py-2.5 pr-4 font-medium text-foreground"
-                              title={task.name}
-                            >
-                              {task.name}
-                            </td>
-                            <td className="py-2.5 pr-4">
-                              <DownloaderTaskStateBadge state={task.state} />
-                            </td>
-                            <td className="min-w-28 py-2.5 pr-4">
-                              <div className="flex items-center gap-2">
-                                <div
-                                  role="progressbar"
-                                  aria-label={`${task.name} 进度`}
-                                  aria-valuemin={0}
-                                  aria-valuemax={100}
-                                  aria-valuenow={pct}
-                                  className="h-1.5 w-16 overflow-hidden rounded-full bg-muted"
-                                >
-                                  <div
-                                    className="h-full rounded-full bg-sky-500 transition-all"
-                                    style={{ width: `${pct}%` }}
-                                  />
-                                </div>
-                                <span className="text-foreground">{pct}%</span>
-                              </div>
-                            </td>
-                            <td className="py-2.5 pr-4 whitespace-nowrap text-foreground">
-                              ↓ {formatSpeed(task.dlSpeed)}
-                            </td>
-                            <td className="py-2.5 pr-4 whitespace-nowrap text-foreground">
-                              ↑ {formatSpeed(task.upSpeed)}
-                            </td>
-                            <td className="py-2.5 pr-4 whitespace-nowrap text-muted-foreground">
-                              {formatEta(task.eta)}
-                            </td>
-                            <td className="py-2.5 pr-4 whitespace-nowrap text-muted-foreground">
-                              {formatBytes(task.size)}
-                            </td>
-                            <td className="py-2.5 pr-4 text-muted-foreground">
-                              {task.ratio.toFixed(2)}
-                            </td>
-                            <td className="py-2.5 text-muted-foreground">{groupVal || '-'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-3">
-              <div>
-                <CardTitle className="text-base">做种统计明细</CardTitle>
-                <CardDescription>
-                  按 Tracker 域名或{secondaryColumnName}统计做种数与总体积
-                </CardDescription>
+            }
+          >
+            {(data.activeTasks ?? []).length === 0 ? (
+              <EmptyState compact hideIcon title="暂无进行中的任务" />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 pr-4 font-medium">任务名称</th>
+                      <th className="py-2 pr-4 font-medium">状态</th>
+                      <th className="py-2 pr-4 font-medium">进度</th>
+                      <th className="py-2 pr-4 font-medium">下载速度</th>
+                      <th className="py-2 pr-4 font-medium">上传速度</th>
+                      <th className="py-2 pr-4 font-medium">剩余时间</th>
+                      <th className="py-2 pr-4 font-medium">体积</th>
+                      <th className="py-2 pr-4 font-medium">分享率</th>
+                      <th className="py-2 font-medium">{secondaryColumnName}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {(data.activeTasks ?? []).map((task, idx) => {
+                      const pct = formatTaskProgressPercent(task.progress);
+                      const groupVal = isQb ? task.category : task.label;
+                      return (
+                        <tr key={`${task.name}-${idx}`}>
+                          <td
+                            className="max-w-xs truncate py-2.5 pr-4 font-medium text-foreground"
+                            title={task.name}
+                          >
+                            {task.name}
+                          </td>
+                          <td className="py-2.5 pr-4">
+                            <DownloaderTaskStateBadge state={task.state} />
+                          </td>
+                          <td className="min-w-28 py-2.5 pr-4">
+                            <div className="flex items-center gap-2">
+                              <ProgressBar
+                                value={pct}
+                                tone="info"
+                                size="sm"
+                                ariaLabel={`${task.name} 进度`}
+                                trackClassName="w-16"
+                              />
+                              <span className="tabular-nums text-foreground">{pct}%</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 pr-4 whitespace-nowrap text-foreground">
+                            ↓ {formatSpeed(task.dlSpeed)}
+                          </td>
+                          <td className="py-2.5 pr-4 whitespace-nowrap text-foreground">
+                            ↑ {formatSpeed(task.upSpeed)}
+                          </td>
+                          <td className="py-2.5 pr-4 whitespace-nowrap text-muted-foreground">
+                            {formatEta(task.eta)}
+                          </td>
+                          <td className="py-2.5 pr-4 whitespace-nowrap text-muted-foreground">
+                            {formatBytes(task.size)}
+                          </td>
+                          <td className="py-2.5 pr-4 text-muted-foreground">
+                            {task.ratio.toFixed(2)}
+                          </td>
+                          <td className="py-2.5 text-muted-foreground">{groupVal || '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            title="做种统计明细"
+            subtitle={`按 Tracker 域名或${secondaryColumnName}统计做种数与总体积`}
+            actions={
               <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
                 <Button
                   type="button"
@@ -349,56 +331,26 @@ export function DownloaderDetailPage() {
                   {secondaryLabel}
                 </Button>
               </div>
-            </CardHeader>
-            <CardContent>
-              {groupTab === 'tracker' ? (
-                data.byTracker.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无 Tracker 统计数据</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-border text-muted-foreground">
-                          <th className="py-2 pr-4 font-medium">Tracker 域名</th>
-                          <th className="py-2 pr-4 font-medium">做种数</th>
-                          <th className="py-2 pr-4 font-medium">总任务数</th>
-                          <th className="py-2 font-medium">总体积</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/60">
-                        {data.byTracker.map((row) => (
-                          <tr key={row.domain}>
-                            <td className="py-2.5 pr-4 font-medium text-foreground">
-                              {row.domain}
-                            </td>
-                            <td className="py-2.5 pr-4 text-foreground">{row.seedingCount}</td>
-                            <td className="py-2.5 pr-4 text-muted-foreground">{row.count}</td>
-                            <td className="py-2.5 text-muted-foreground">
-                              {formatBytes(row.size)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              ) : secondaryStats.length === 0 ? (
-                <p className="text-sm text-muted-foreground">暂无{secondaryColumnName}统计数据</p>
+            }
+          >
+            {groupTab === 'tracker' ? (
+              data.byTracker.length === 0 ? (
+                <EmptyState compact hideIcon title="暂无 Tracker 统计数据" />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
                       <tr className="border-b border-border text-muted-foreground">
-                        <th className="py-2 pr-4 font-medium">{secondaryColumnName}</th>
+                        <th className="py-2 pr-4 font-medium">Tracker 域名</th>
                         <th className="py-2 pr-4 font-medium">做种数</th>
                         <th className="py-2 pr-4 font-medium">总任务数</th>
                         <th className="py-2 font-medium">总体积</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60">
-                      {secondaryStats.map((row) => (
-                        <tr key={row.name}>
-                          <td className="py-2.5 pr-4 font-medium text-foreground">{row.name}</td>
+                      {data.byTracker.map((row) => (
+                        <tr key={row.domain}>
+                          <td className="py-2.5 pr-4 font-medium text-foreground">{row.domain}</td>
                           <td className="py-2.5 pr-4 text-foreground">{row.seedingCount}</td>
                           <td className="py-2.5 pr-4 text-muted-foreground">{row.count}</td>
                           <td className="py-2.5 text-muted-foreground">{formatBytes(row.size)}</td>
@@ -407,83 +359,106 @@ export function DownloaderDetailPage() {
                     </tbody>
                   </table>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <AlertTriangle className="size-4 text-amber-500" aria-hidden="true" />
-                  <span>出错与无连接种子</span>
-                </CardTitle>
-                <span className="text-xs text-muted-foreground">
-                  共 {data.problemsTotal} 条
-                  {data.problemsTotal > data.problems.length
-                    ? `（仅显示前 ${data.problems.length} 条）`
-                    : ''}
-                </span>
-              </div>
-              <CardDescription>
-                仅用于排查出错、卡住或无连接状态的种子，不提供修改或删除操作。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {data.problems.length === 0 ? (
-                <EmptyState
-                  title="暂无异常种子"
-                  description="当前所有种子状态正常，无出错或无连接任务。"
-                />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-muted-foreground">
-                        <th className="py-2 pr-4 font-medium">种子名称</th>
-                        <th className="py-2 pr-4 font-medium">异常原因</th>
-                        <th className="py-2 pr-4 font-medium">状态</th>
-                        <th className="py-2 pr-4 font-medium">体积</th>
-                        <th className="py-2 pr-4 font-medium">Tracker</th>
-                        <th className="py-2 pr-4 font-medium">{secondaryColumnName}</th>
-                        <th className="py-2 font-medium">进度</th>
+              )
+            ) : secondaryStats.length === 0 ? (
+              <EmptyState compact hideIcon title={`暂无${secondaryColumnName}统计数据`} />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 pr-4 font-medium">{secondaryColumnName}</th>
+                      <th className="py-2 pr-4 font-medium">做种数</th>
+                      <th className="py-2 pr-4 font-medium">总任务数</th>
+                      <th className="py-2 font-medium">总体积</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {secondaryStats.map((row) => (
+                      <tr key={row.name}>
+                        <td className="py-2.5 pr-4 font-medium text-foreground">{row.name}</td>
+                        <td className="py-2.5 pr-4 text-foreground">{row.seedingCount}</td>
+                        <td className="py-2.5 pr-4 text-muted-foreground">{row.count}</td>
+                        <td className="py-2.5 text-muted-foreground">{formatBytes(row.size)}</td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {data.problems.map((item) => (
-                        <tr key={item.id}>
-                          <td className="max-w-xs truncate py-2.5 pr-4 font-medium text-foreground">
-                            {item.name}
-                          </td>
-                          <td className="py-2.5 pr-4 text-amber-700 dark:text-amber-400">
-                            {item.reason}
-                          </td>
-                          <td className="py-2.5 pr-4">
-                            <StatusBadge
-                              status={
-                                item.state === 'error' || item.state === 'missingFiles'
-                                  ? 'error'
-                                  : 'warning'
-                              }
-                              label={item.state}
-                            />
-                          </td>
-                          <td className="py-2.5 pr-4 text-muted-foreground">
-                            {formatBytes(item.size)}
-                          </td>
-                          <td className="py-2.5 pr-4 font-mono text-muted-foreground">
-                            {item.trackerDomain}
-                          </td>
-                          <td className="py-2.5 pr-4 text-muted-foreground">{item.group}</td>
-                          <td className="py-2.5 text-muted-foreground">{item.progress}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            leading={
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="size-4" aria-hidden="true" />
+              </div>
+            }
+            title="出错与无连接种子"
+            subtitle="仅用于排查出错、卡住或无连接状态的种子，不提供修改或删除操作。"
+            actions={
+              <span className="text-xs text-muted-foreground">
+                共 {data.problemsTotal} 条
+                {data.problemsTotal > data.problems.length
+                  ? `（仅显示前 ${data.problems.length} 条）`
+                  : ''}
+              </span>
+            }
+          >
+            {data.problems.length === 0 ? (
+              <EmptyState
+                compact
+                title="暂无异常种子"
+                description="当前所有种子状态正常，无出错或无连接任务。"
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 pr-4 font-medium">种子名称</th>
+                      <th className="py-2 pr-4 font-medium">异常原因</th>
+                      <th className="py-2 pr-4 font-medium">状态</th>
+                      <th className="py-2 pr-4 font-medium">体积</th>
+                      <th className="py-2 pr-4 font-medium">Tracker</th>
+                      <th className="py-2 pr-4 font-medium">{secondaryColumnName}</th>
+                      <th className="py-2 font-medium">进度</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {data.problems.map((item) => (
+                      <tr key={item.id}>
+                        <td className="max-w-xs truncate py-2.5 pr-4 font-medium text-foreground">
+                          {item.name}
+                        </td>
+                        <td className="py-2.5 pr-4 text-amber-700 dark:text-amber-400">
+                          {item.reason}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <StatusBadge
+                            status={
+                              item.state === 'error' || item.state === 'missingFiles'
+                                ? 'error'
+                                : 'warning'
+                            }
+                            label={item.state}
+                          />
+                        </td>
+                        <td className="py-2.5 pr-4 text-muted-foreground">
+                          {formatBytes(item.size)}
+                        </td>
+                        <td className="py-2.5 pr-4 font-mono text-muted-foreground">
+                          {item.trackerDomain}
+                        </td>
+                        <td className="py-2.5 pr-4 text-muted-foreground">{item.group}</td>
+                        <td className="py-2.5 text-muted-foreground">{item.progress}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </SectionCard>
         </div>
       )}
     </div>
