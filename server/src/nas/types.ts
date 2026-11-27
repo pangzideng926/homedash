@@ -50,12 +50,53 @@ export interface NasDockerContainer {
   status: string;
   runningFor: string;
   ports: string;
+  cpuPercent?: string;
+  memUsage?: string;
+  memPercent?: string;
+  protected?: boolean;
 }
 
 export interface NasDockerInfo {
   available: boolean;
   reason?: string;
+  actionsEnabled?: boolean;
+  protectedContainers?: string[];
   containers: NasDockerContainer[];
+}
+
+export type DockerAction = 'start' | 'stop' | 'restart';
+
+export interface DockerActionResponse {
+  ok: boolean;
+  container: string;
+  action: DockerAction;
+  message: string;
+  durationMs: number;
+}
+
+export interface DockerLogsResponse {
+  container: string;
+  tail: number;
+  logs: string;
+  fetchedAt: string;
+}
+
+export type DockerAuditResult = 'success' | 'rejected' | 'failed';
+
+export interface DockerAuditEntry {
+  timestamp: string;
+  username: string;
+  clientIp: string;
+  container: string;
+  action: string;
+  result: DockerAuditResult;
+  durationMs: number;
+  error?: string;
+}
+
+export interface DockerAuditResponse {
+  entries: DockerAuditEntry[];
+  total: number;
 }
 
 export interface NasStatusData {

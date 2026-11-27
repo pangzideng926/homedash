@@ -11,6 +11,7 @@ import { getConfigStatus, type AppConfig, type SafeLogger } from './config/index
 import type { AppDatabase } from './db/index.js';
 import { createAuthMiddleware, type AppVariables } from './middleware/auth.js';
 import { createDevicesService, type SshCommandExecutor } from './devices/index.js';
+import { createDownloadersService } from './downloaders/index.js';
 import {
   createIntegrationsStore,
   type MoviepilotTestOverride,
@@ -18,7 +19,7 @@ import {
   type QbittorrentTestOverride,
 } from './integrations/index.js';
 import { createMoviepilotService } from './moviepilot/index.js';
-import { createNasService } from './nas/index.js';
+import { createNasDockerService, createNasService } from './nas/index.js';
 import { createQbittorrentService } from './qbittorrent/index.js';
 import { readVpsList, saveVpsList } from './vps/service.js';
 import type { WindowsCommandExecutor } from './windows/index.js';
@@ -127,6 +128,17 @@ export function createApp(
     now: getNow,
     logger: options?.logger,
   });
+  const nasDockerService = createNasDockerService(config, integrationsStore, nasService, {
+    executor: options?.sshExecutor ?? options?.windowsExecutor,
+    readPrivateKey: options?.readPrivateKey ?? options?.readWindowsPrivateKey,
+    now: getNow,
+    logger: options?.logger,
+  });
+  const downloadersService = createDownloadersService(integrationsStore, {
+    fetchFn: options?.fetchFn,
+    now: getNow,
+    logger: options?.logger,
+  });
   const qbittorrentService = createQbittorrentService(integrationsStore, {
     fetchFn: options?.fetchFn,
     now: getNow,
@@ -215,7 +227,11 @@ export function createApp(
   });
 
   app.get('/api/settings/status', (c) => {
-    return c.json(getConfigStatus(config, integrationsStore.getMergedKeyPresence()));
+    return c.json(
+      getConfigStatus(config, integrationsStore.getMergedKeyPresence(), {
+        downloaders: integrationsStore.hasConfiguredDownloaders(),
+      }),
+    );
   });
 
   app.get('/api/integrations', (c) => {
@@ -243,7 +259,10 @@ export function createApp(
     }
 
     if (moduleName === 'nas') nasService.invalidateCache();
-    if (moduleName === 'qbittorrent') qbittorrentService.invalidateCache();
+    if (moduleName === 'qbittorrent') {
+      qbittorrentService.invalidateCache();
+      downloadersService.invalidateCache();
+    }
     if (moduleName === 'moviepilot') moviepilotService.invalidateCache();
 
     return c.json(result.data);
@@ -283,10 +302,182 @@ export function createApp(
     return c.json(await nasService.getStatus({ refresh }));
   });
 
+  app.get('/api/nas/docker/audit', (c) => {
+    const limitParam = c.req.query('limit');
+    const result = nasDockerService.getAudit(limitParam);
+    if (!result.ok) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json(result.data);
+  });
+
+  app.get('/api/nas/docker/:name/logs', async (c) => {
+    const name = c.req.param('name');
+    const tailParam = c.req.query('tail');
+    const result = await nasDockerService.getLogs({ name, tailRaw: tailParam });
+    if (!result.ok) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json(result.data);
+  });
+
+  app.post('/api/nas/docker/:name/:action', async (c) => {
+    const name = c.req.param('name');
+    const action = c.req.param('action');
+    const result = await nasDockerService.executeAction({
+      name,
+      action,
+      username: c.get('username'),
+      clientIp: resolveClientIp(c),
+    });
+    if (!result.ok) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json(result.data);
+  });
+
+  app.get('/api/downloaders', (c) => {
+    return c.json(integrationsStore.getDownloadersView());
+  });
+
+  app.put('/api/downloaders', async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: '请求体 JSON 格式错误' }, 400);
+    }
+
+    const result = integrationsStore.saveDownloaders(rawBody);
+    if (!result.ok) {
+      return c.json(
+        {
+          error: result.error,
+          ...(result.details ? { details: result.details } : {}),
+        },
+        result.status,
+      );
+    }
+
+    downloadersService.invalidateCache();
+    qbittorrentService.invalidateCache();
+    return c.json(result.data);
+  });
+
+  app.get('/api/downloaders/summary', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    return c.json(await downloadersService.getAllSummaries({ refresh }));
+  });
+
+  app.get('/api/downloaders/:id/summary', async (c) => {
+    const id = c.req.param('id');
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    const result = await downloadersService.getInstanceSummary(id, { refresh });
+    if (!result.found) {
+      return c.json({ error: '未找到指定下载器实例' }, 404);
+    }
+    return c.json(result.data);
+  });
+
+  app.post('/api/downloaders/test', async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: '请求体 JSON 格式错误' }, 400);
+    }
+
+    const result = await downloadersService.testConnection(rawBody);
+    if (!result.ok) {
+      return c.json({ error: result.error }, result.status);
+    }
+    return c.json(result.data);
+  });
+
+  // 兼容旧版 /api/qbittorrent/summary，优先读取旧配置，否则回退到第一个启用的 qBittorrent 实例
   app.get('/api/qbittorrent/summary', async (c) => {
     const refreshParam = c.req.query('refresh');
     const refresh = refreshParam === '1' || refreshParam === 'true';
-    return c.json(await qbittorrentService.getSummary({ refresh }));
+    const legacyCfg = integrationsStore.resolveQbittorrentConfig();
+    if (legacyCfg.configured) {
+      return c.json(await qbittorrentService.getSummary({ refresh }));
+    }
+
+    const resolvedDownloaders = integrationsStore.resolveDownloadersConfig();
+    const firstQb = resolvedDownloaders.instances.find(
+      (item) => item.enabled && item.type === 'qbittorrent',
+    );
+    if (!firstQb) {
+      return c.json(await qbittorrentService.getSummary({ refresh }));
+    }
+
+    const detail = await downloadersService.getInstanceSummary(firstQb.id, { refresh });
+    if (!detail.found) {
+      return c.json(await qbittorrentService.getSummary({ refresh }));
+    }
+
+    const s = detail.data;
+    return c.json({
+      configured: true,
+      mock: resolvedDownloaders.mock,
+      online: s.online,
+      checkedAt: s.checkedAt,
+      cached: s.cached,
+      ...(s.errorCode ? { errorCode: s.errorCode } : {}),
+      ...(s.error ? { error: s.error } : {}),
+      ...(s.online
+        ? {
+            data: {
+              version: s.version,
+              transfer: {
+                upSpeed: s.upSpeed,
+                dlSpeed: s.dlSpeed,
+                alltimeUploadBytes: s.totalUploaded ?? 0,
+                alltimeDownloadBytes: s.totalDownloaded ?? 0,
+                globalRatio: s.ratio ?? 0,
+                totalsApproximate: Boolean(s.totalsApproximate),
+              },
+              counts: {
+                ...s.counts,
+                other: Math.max(
+                  0,
+                  s.counts.total -
+                    (s.counts.seeding +
+                      s.counts.downloading +
+                      s.counts.paused +
+                      s.counts.error +
+                      s.counts.stalled),
+                ),
+              },
+              byTracker: s.byTracker.map((item) => ({
+                name: item.domain,
+                seedingCount: item.seedingCount,
+                totalCount: item.count,
+                totalSizeBytes: item.size,
+              })),
+              byCategory: (s.byCategory ?? []).map((item) => ({
+                name: item.name,
+                seedingCount: item.seedingCount,
+                totalCount: item.count,
+                totalSizeBytes: item.size,
+              })),
+              problemTorrents: s.problems.map((item) => ({
+                hash: item.id,
+                name: item.name,
+                state: item.state,
+                reason: item.reason,
+                sizeBytes: item.size,
+                trackerDomain: item.trackerDomain,
+                category: item.group,
+                progress: item.progress,
+              })),
+              problemTorrentsTotal: s.problemsTotal,
+            },
+          }
+        : {}),
+    });
   });
 
   app.get('/api/moviepilot/summary', async (c) => {

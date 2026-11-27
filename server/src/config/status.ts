@@ -103,6 +103,7 @@ function resolveOptionalModuleStatus(
   moduleId: (typeof OPTIONAL_CONFIG_MODULES)[number],
   presence: Readonly<Record<ConfigKey, boolean>>,
   source?: AppConfig | Record<string, string | undefined>,
+  moduleConfiguredOverrides?: Partial<Record<ConfigModuleName, boolean>>,
 ): ConfigModuleStatusValue {
   if (moduleId === 'vps') {
     return presence.VPS_LIST_FILE ? 'configured' : 'unconfigured';
@@ -130,6 +131,18 @@ function resolveOptionalModuleStatus(
     return resolveRequiredKeysOrMockStatus(isMockEnabled, NAS_REQUIRED_KEYS, presence);
   }
 
+  if (moduleId === 'downloaders') {
+    const isMockEnabled = isAppConfig(source)
+      ? Boolean(source.downloaders?.DOWNLOADERS_MOCK || source.qbittorrent?.QBIT_MOCK)
+      : isEnvTruthy((source ?? process.env).DOWNLOADERS_MOCK) ||
+        isEnvTruthy((source ?? process.env).QBIT_MOCK);
+    if (isMockEnabled || moduleConfiguredOverrides?.downloaders) {
+      return 'configured';
+    }
+    const qbitStatus = resolveRequiredKeysOrMockStatus(false, QBIT_REQUIRED_KEYS, presence);
+    return qbitStatus === 'configured' ? 'configured' : 'unconfigured';
+  }
+
   if (moduleId === 'qbittorrent') {
     const isMockEnabled = isAppConfig(source)
       ? Boolean(source.qbittorrent?.QBIT_MOCK)
@@ -149,6 +162,7 @@ function resolveOptionalModuleStatus(
 export function getConfigStatus(
   source?: AppConfig | Record<string, string | undefined>,
   extraKeyPresence?: Partial<Record<ConfigKey, boolean>>,
+  moduleConfiguredOverrides?: Partial<Record<ConfigModuleName, boolean>>,
 ): ConfigStatusReport {
   const presence = resolveKeyPresence(source, extraKeyPresence);
 
@@ -161,7 +175,7 @@ export function getConfigStatus(
   for (const moduleId of OPTIONAL_CONFIG_MODULES) {
     modules[moduleId] = buildModuleStatus(
       moduleId,
-      resolveOptionalModuleStatus(moduleId, presence, source),
+      resolveOptionalModuleStatus(moduleId, presence, source, moduleConfiguredOverrides),
       presence,
     );
   }

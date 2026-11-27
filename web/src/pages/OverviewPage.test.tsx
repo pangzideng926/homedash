@@ -69,36 +69,55 @@ describe('OverviewPage 总览三张汇总卡', () => {
           },
         });
       }
-      if (url.startsWith('/api/qbittorrent/summary')) {
+      if (url.startsWith('/api/downloaders/summary')) {
         return jsonResponse({
           configured: true,
           mock: false,
-          online: true,
           checkedAt: '2026-11-27T08:00:00.000Z',
-          cached: false,
-          data: {
-            version: 'v5.0.0',
-            transfer: {
-              upSpeed: 5 * 1024 * 1024,
+          instances: [
+            {
+              id: 'qb-1',
+              name: 'qB 下载',
+              type: 'qbittorrent',
+              tags: ['download'],
+              online: true,
+              checkedAt: '2026-11-27T08:00:00.000Z',
+              cached: false,
+              version: 'v5.0.0',
+              upSpeed: 3 * 1024 * 1024,
               dlSpeed: 1024 * 1024,
-              alltimeUploadBytes: 100,
-              alltimeDownloadBytes: 50,
-              globalRatio: 2,
-              totalsApproximate: false,
+              counts: { seeding: 20, downloading: 1, paused: 0, error: 1, stalled: 1, total: 23 },
+              totalSize: 1000,
+              byTracker: [],
+              problems: [],
+              problemsTotal: 0,
             },
-            counts: {
-              seeding: 30,
-              downloading: 1,
-              paused: 0,
-              error: 1,
-              stalled: 2,
-              other: 0,
-              total: 34,
+            {
+              id: 'tr-1',
+              name: 'TR 保种',
+              type: 'transmission',
+              tags: ['seed'],
+              online: true,
+              checkedAt: '2026-11-27T08:00:00.000Z',
+              cached: false,
+              version: '4.0.6',
+              upSpeed: 2 * 1024 * 1024,
+              dlSpeed: 0,
+              counts: { seeding: 10, downloading: 0, paused: 0, error: 0, stalled: 1, total: 11 },
+              totalSize: 2000,
+              byTracker: [],
+              problems: [],
+              problemsTotal: 0,
             },
-            byTracker: [],
-            byCategory: [],
-            problemTorrents: [],
-            problemTorrentsTotal: 0,
+          ],
+          totals: {
+            totalInstances: 2,
+            onlineInstances: 2,
+            offlineInstances: 0,
+            upSpeed: 5 * 1024 * 1024,
+            dlSpeed: 1024 * 1024,
+            totalSize: 3000,
+            counts: { seeding: 30, downloading: 1, paused: 0, error: 1, stalled: 2, total: 34 },
           },
         });
       }
@@ -149,6 +168,7 @@ describe('OverviewPage 总览三张汇总卡', () => {
     expect(screen.getByText('30 做种')).toBeInTheDocument();
     expect(screen.getByText('上行 5.0 MiB/s · 下行 1.0 MiB/s')).toBeInTheDocument();
     expect(screen.getByText('做种 30 · 出错/卡住 3')).toBeInTheDocument();
+    expect(screen.getByText('在线实例 2 / 2')).toBeInTheDocument();
 
     expect(screen.getByText('未配置，去设置')).toBeInTheDocument();
   });

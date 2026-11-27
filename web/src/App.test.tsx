@@ -258,13 +258,21 @@ describe('homedash 前端认证与控制台', () => {
           cached: false,
         });
       }
-      if (url.startsWith('/api/qbittorrent/summary')) {
+      if (url.startsWith('/api/downloaders/summary')) {
         return jsonResponse({
           configured: false,
           mock: false,
-          online: false,
           checkedAt: '2026-11-27T08:00:00.000Z',
-          cached: false,
+          instances: [],
+          totals: {
+            totalInstances: 0,
+            onlineInstances: 0,
+            offlineInstances: 0,
+            upSpeed: 0,
+            dlSpeed: 0,
+            totalSize: 0,
+            counts: { seeding: 0, downloading: 0, paused: 0, error: 0, stalled: 0, total: 0 },
+          },
         });
       }
       if (url.startsWith('/api/moviepilot/summary')) {

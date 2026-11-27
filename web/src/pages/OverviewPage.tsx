@@ -8,14 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useApi } from '@/hooks/useApi';
 import {
   fetchDevicesStatus,
+  fetchDownloadersSummary,
   fetchMoviepilotSummary,
   fetchNasStatus,
-  fetchQbitSummary,
   fetchVpsList,
   type DevicesStatusResponse,
+  type DownloadersSummaryResponse,
   type MoviepilotSummaryResponse,
   type NasStatusResponse,
-  type QbitSummaryResponse,
   type VpsLevel,
   type VpsListResponse,
   type VpsServerView,
@@ -247,8 +247,8 @@ function buildNasCardView(
   };
 }
 
-function buildQbitCardView(
-  data: QbitSummaryResponse | null,
+function buildDownloadersCardView(
+  data: DownloadersSummaryResponse | null,
   loading: boolean,
   error: Error | null,
 ): {
@@ -289,27 +289,44 @@ function buildQbitCardView(
       footer: '未配置，去设置',
     };
   }
-  if (!data.online || !data.data) {
+  if (data.totals.totalInstances === 0) {
     return {
-      to: '/seeding',
-      value: '连接失败',
-      status: 'error',
-      statusLabel: '异常',
+      to: '/settings',
+      value: '0 实例',
+      status: 'unknown',
+      statusLabel: '未启用',
       lines: [],
-      footer: data.error ?? '无法连接 qBittorrent',
+      footer: '请前往设置页启用下载器实例',
     };
   }
 
-  const d = data.data;
-  const issueCount = d.counts.error + d.counts.stalled;
+  const { totals } = data;
+  const issueCount = totals.counts.error + totals.counts.stalled;
+  const allOnline = totals.onlineInstances === totals.totalInstances;
+  const noneOnline = totals.onlineInstances === 0;
+
+  let status: StatusVariant = 'success';
+  let statusLabel = '正常';
+  if (noneOnline) {
+    status = 'error';
+    statusLabel = '全部离线';
+  } else if (!allOnline) {
+    status = 'warning';
+    statusLabel = '部分离线';
+  } else if (issueCount > 0) {
+    status = 'warning';
+    statusLabel = `异常 ${issueCount}`;
+  }
+
   return {
     to: '/seeding',
-    value: `${d.counts.seeding} 做种`,
-    status: issueCount > 0 ? 'warning' : 'success',
-    statusLabel: issueCount > 0 ? `异常 ${issueCount}` : '正常',
+    value: noneOnline ? '连接失败' : `${totals.counts.seeding} 做种`,
+    status,
+    statusLabel,
     lines: [
-      `上行 ${formatSpeed(d.transfer.upSpeed)} · 下行 ${formatSpeed(d.transfer.dlSpeed)}`,
-      `做种 ${d.counts.seeding} · 出错/卡住 ${issueCount}`,
+      `上行 ${formatSpeed(totals.upSpeed)} · 下行 ${formatSpeed(totals.dlSpeed)}`,
+      `做种 ${totals.counts.seeding} · 出错/卡住 ${issueCount}`,
+      `在线实例 ${totals.onlineInstances} / ${totals.totalInstances}`,
     ],
   };
 }
@@ -381,19 +398,26 @@ function buildMoviepilotCardView(
 
 export function OverviewPage() {
   const nasFetcher = useCallback((signal: AbortSignal) => fetchNasStatus({ signal }), []);
-  const qbitFetcher = useCallback((signal: AbortSignal) => fetchQbitSummary({ signal }), []);
+  const downloadersFetcher = useCallback(
+    (signal: AbortSignal) => fetchDownloadersSummary({ signal }),
+    [],
+  );
   const mpFetcher = useCallback((signal: AbortSignal) => fetchMoviepilotSummary({ signal }), []);
   const devicesFetcher = useCallback((signal: AbortSignal) => fetchDevicesStatus({ signal }), []);
   const vpsFetcher = useCallback((signal: AbortSignal) => fetchVpsList(signal), []);
 
   const nasState = useApi(nasFetcher);
-  const qbitState = useApi(qbitFetcher);
+  const downloadersState = useApi(downloadersFetcher);
   const mpState = useApi(mpFetcher);
   const devicesState = useApi(devicesFetcher);
   const vpsState = useApi(vpsFetcher);
 
   const nasCard = buildNasCardView(nasState.data, nasState.loading, nasState.error);
-  const qbitCard = buildQbitCardView(qbitState.data, qbitState.loading, qbitState.error);
+  const downloadersCard = buildDownloadersCardView(
+    downloadersState.data,
+    downloadersState.loading,
+    downloadersState.error,
+  );
   const mpCard = buildMoviepilotCardView(mpState.data, mpState.loading, mpState.error);
   const devicesSummary = buildDevicesSummaryBadge(
     devicesState.data,
@@ -447,14 +471,14 @@ export function OverviewPage() {
 
         {/* 下载汇总卡 */}
         <Link
-          to={qbitCard.to}
+          to={downloadersCard.to}
           className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Card className="flex h-full flex-col justify-between transition-colors hover:border-primary/40">
             <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
               <div className="min-w-0 space-y-1">
                 <CardTitle className="text-base">下载与做种</CardTitle>
-                <CardDescription>qBittorrent 实时传输与做种统计</CardDescription>
+                <CardDescription>多实例下载器实时传输与做种汇总</CardDescription>
               </div>
               <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
                 <ArrowUpDown className="size-4" aria-hidden="true" />
@@ -463,18 +487,18 @@ export function OverviewPage() {
             <CardContent className="space-y-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="truncate text-2xl font-semibold tracking-tight text-foreground">
-                  {qbitCard.value}
+                  {downloadersCard.value}
                 </div>
-                <StatusBadge status={qbitCard.status} label={qbitCard.statusLabel} />
+                <StatusBadge status={downloadersCard.status} label={downloadersCard.statusLabel} />
               </div>
-              {qbitCard.lines.length > 0 ? (
+              {downloadersCard.lines.length > 0 ? (
                 <ul className="space-y-1 border-t border-border/60 pt-2 text-xs text-muted-foreground">
-                  {qbitCard.lines.map((line) => (
+                  {downloadersCard.lines.map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
-              ) : qbitCard.footer ? (
-                <p className="text-xs text-muted-foreground">{qbitCard.footer}</p>
+              ) : downloadersCard.footer ? (
+                <p className="text-xs text-muted-foreground">{downloadersCard.footer}</p>
               ) : null}
             </CardContent>
           </Card>

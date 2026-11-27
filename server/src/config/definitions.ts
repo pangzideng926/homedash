@@ -2,6 +2,7 @@ export const CONFIG_MODULE_NAMES = [
   'app',
   'auth',
   'nas',
+  'downloaders',
   'qbittorrent',
   'moviepilot',
   'devices',
@@ -13,6 +14,7 @@ export type ConfigModuleName = (typeof CONFIG_MODULE_NAMES)[number];
 
 export const OPTIONAL_CONFIG_MODULES = [
   'nas',
+  'downloaders',
   'qbittorrent',
   'moviepilot',
   'devices',
@@ -26,7 +28,8 @@ export const CONFIG_MODULE_LABELS: Readonly<Record<ConfigModuleName, string>> = 
   app: '应用基础',
   auth: '认证与会话',
   nas: 'NAS',
-  qbittorrent: 'qBittorrent',
+  downloaders: '下载器',
+  qbittorrent: 'qBittorrent（旧版兼容）',
   moviepilot: 'MoviePilot',
   devices: '家用设备',
   windows: '家用 Windows 主机（旧版兼容）',
@@ -61,7 +64,11 @@ export const CONFIG_MODULE_KEYS = {
     'NAS_SSH_KEY_PATH',
     'NAS_MOCK',
     'NAS_CACHE_SECONDS',
+    'DOCKER_ACTIONS_ENABLED',
+    'DOCKER_PROTECTED_CONTAINERS',
+    'DOCKER_AUDIT_FILE',
   ],
+  downloaders: ['DOWNLOADERS_MOCK', 'DOWNLOADER_CACHE_SECONDS', 'DOWNLOADER_TIMEOUT_MS'],
   qbittorrent: [
     'QBIT_URL',
     'QBIT_USERNAME',
@@ -184,6 +191,15 @@ export interface NasSectionConfig {
   NAS_SSH_KEY_PATH?: string;
   NAS_MOCK: boolean;
   NAS_CACHE_SECONDS: number;
+  DOCKER_ACTIONS_ENABLED: boolean;
+  DOCKER_PROTECTED_CONTAINERS: string[];
+  DOCKER_AUDIT_FILE: string;
+}
+
+export interface DownloadersSectionConfig {
+  DOWNLOADERS_MOCK: boolean;
+  DOWNLOADER_CACHE_SECONDS: number;
+  DOWNLOADER_TIMEOUT_MS: number;
 }
 
 export interface QbittorrentSectionConfig {
@@ -230,6 +246,7 @@ export interface AppConfig {
   app: AppSectionConfig;
   auth: AuthSectionConfig;
   nas?: NasSectionConfig;
+  downloaders?: DownloadersSectionConfig;
   qbittorrent?: QbittorrentSectionConfig;
   moviepilot?: MoviepilotSectionConfig;
   devices?: DevicesSectionConfig;

@@ -1,21 +1,49 @@
-import { useCallback, useState } from 'react';
-import { CheckCircle2, PlugZap, RotateCw, Save, ShieldCheck, Trash2, XCircle } from 'lucide-react';
+import { useCallback, useState, type FormEvent } from 'react';
+import {
+  CheckCircle2,
+  Pencil,
+  PlugZap,
+  Plus,
+  RotateCw,
+  Save,
+  ShieldCheck,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
 import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from '@/components/common';
+import {
+  DownloaderTagBadge,
+  DownloaderTypeBadge,
+} from '@/components/downloaders/downloader-badges';
+import {
+  DOWNLOADER_TAG_OPTIONS,
+  getDownloaderTypeFullName,
+} from '@/components/downloaders/downloader-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApi } from '@/hooks/useApi';
 import {
+  fetchDownloaders,
   fetchIntegrations,
   fetchSettingsStatus,
+  saveDownloaders,
   saveIntegrationModule,
+  testDownloaderConnection,
   testIntegrationModule,
+  type DownloaderInput,
+  type DownloaderPublicConfig,
+  type DownloadersListResponse,
+  type DownloaderTag,
+  type DownloaderTestResponse,
+  type DownloaderType,
   type IntegrationFieldSource,
-  type IntegrationModuleName,
   type IntegrationsViewResponse,
   type IntegrationTestResponse,
 } from '@/lib/api';
+
+type EditableIntegrationModule = 'nas' | 'moviepilot';
 
 interface NasFormState {
   host: string;
@@ -24,18 +52,36 @@ interface NasFormState {
   keyPath: string;
 }
 
-interface QbitFormState {
-  url: string;
-  username: string;
-  password: string;
-  clearPassword: boolean;
-}
-
 interface MoviepilotFormState {
   url: string;
   apiToken: string;
   clearApiToken: boolean;
 }
+
+interface DownloaderFormState {
+  id?: string;
+  name: string;
+  type: DownloaderType;
+  url: string;
+  username: string;
+  password: string;
+  passwordSet: boolean;
+  clearPassword: boolean;
+  tags: DownloaderTag[];
+  enabled: boolean;
+}
+
+const EMPTY_DOWNLOADER_FORM: DownloaderFormState = {
+  name: '',
+  type: 'qbittorrent',
+  url: '',
+  username: '',
+  password: '',
+  passwordSet: false,
+  clearPassword: false,
+  tags: [],
+  enabled: true,
+};
 
 interface ModuleActionFeedback {
   saving?: boolean;
@@ -49,16 +95,31 @@ function isValidIntegrationsResponse(data: unknown): data is IntegrationsViewRes
   if (typeof data !== 'object' || data === null) return false;
   const candidate = data as Partial<IntegrationsViewResponse>;
   return Boolean(
-    candidate.modules &&
-    candidate.modules.nas?.fields &&
-    candidate.modules.qbittorrent?.fields &&
-    candidate.modules.moviepilot?.fields,
+    candidate.modules && candidate.modules.nas?.fields && candidate.modules.moviepilot?.fields,
   );
+}
+
+function isValidDownloadersResponse(data: unknown): data is DownloadersListResponse {
+  if (typeof data !== 'object' || data === null) return false;
+  const candidate = data as Partial<DownloadersListResponse>;
+  return Array.isArray(candidate.downloaders);
 }
 
 function EnvManagedBadge({ source }: { source: IntegrationFieldSource }) {
   if (source !== 'env') return null;
   return <StatusBadge status="info" label="由 .env 管理" showDot={false} />;
+}
+
+function toDownloaderInput(item: DownloaderPublicConfig): DownloaderInput {
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type,
+    url: item.url,
+    username: item.username,
+    tags: [...item.tags],
+    enabled: item.enabled,
+  };
 }
 
 export function SettingsPage() {
@@ -68,12 +129,6 @@ export function SettingsPage() {
     user: '',
     keyPath: '',
   });
-  const [qbitForm, setQbitForm] = useState<QbitFormState>({
-    url: '',
-    username: '',
-    password: '',
-    clearPassword: false,
-  });
   const [mpForm, setMpForm] = useState<MoviepilotFormState>({
     url: '',
     apiToken: '',
@@ -81,6 +136,7 @@ export function SettingsPage() {
   });
 
   const statusApi = useApi(fetchSettingsStatus);
+
   const integrationsFetcher = useCallback(async (signal: AbortSignal) => {
     const res = await fetchIntegrations(signal);
     if (!isValidIntegrationsResponse(res)) {
@@ -94,13 +150,6 @@ export function SettingsPage() {
         user: nasFields.user.value ?? '',
         keyPath: nasFields.keyPath.value ?? '',
       });
-      const qbitFields = res.modules.qbittorrent.fields;
-      setQbitForm({
-        url: qbitFields.url.value ?? '',
-        username: qbitFields.username.value ?? '',
-        password: '',
-        clearPassword: false,
-      });
       const mpFields = res.modules.moviepilot.fields;
       setMpForm({
         url: mpFields.url.value ?? '',
@@ -112,13 +161,44 @@ export function SettingsPage() {
   }, []);
   const integrationsApi = useApi(integrationsFetcher);
 
-  const [feedback, setFeedback] = useState<Record<IntegrationModuleName, ModuleActionFeedback>>({
-    nas: {},
-    qbittorrent: {},
-    moviepilot: {},
-  });
+  const downloadersFetcher = useCallback(async (signal: AbortSignal) => {
+    try {
+      const res = await fetchDownloaders(signal);
+      return isValidDownloadersResponse(res) ? res : null;
+    } catch {
+      return null;
+    }
+  }, []);
+  const downloadersApi = useApi(downloadersFetcher);
 
-  const setModuleFeedback = (mod: IntegrationModuleName, patch: Partial<ModuleActionFeedback>) => {
+  const [feedback, setFeedback] = useState<Record<EditableIntegrationModule, ModuleActionFeedback>>(
+    {
+      nas: {},
+      moviepilot: {},
+    },
+  );
+
+  // 下载器表单与交互状态
+  const [dlFormOpen, setDlFormOpen] = useState(false);
+  const [dlForm, setDlForm] = useState<DownloaderFormState>(EMPTY_DOWNLOADER_FORM);
+  const [dlFormError, setDlFormError] = useState<string | null>(null);
+  const [dlSaving, setDlSaving] = useState(false);
+  const [dlTestingForm, setDlTestingForm] = useState(false);
+  const [dlFormTestResult, setDlFormTestResult] = useState<DownloaderTestResponse | null>(null);
+  const [dlActionFeedback, setDlActionFeedback] = useState<{
+    success?: string;
+    error?: string;
+  }>({});
+  const [dlTestingIds, setDlTestingIds] = useState<Record<string, boolean>>({});
+  const [dlTestResultsById, setDlTestResultsById] = useState<
+    Record<string, DownloaderTestResponse>
+  >({});
+  const [dlConfirmDeleteId, setDlConfirmDeleteId] = useState<string | null>(null);
+
+  const setModuleFeedback = (
+    mod: EditableIntegrationModule,
+    patch: Partial<ModuleActionFeedback>,
+  ) => {
     setFeedback((prev) => ({
       ...prev,
       [mod]: { ...prev[mod], ...patch },
@@ -128,6 +208,7 @@ export function SettingsPage() {
   const handleRefreshAll = () => {
     void statusApi.refetch();
     void integrationsApi.refetch();
+    void downloadersApi.refetch();
   };
 
   const buildNasPayload = (): Record<string, unknown> => {
@@ -137,21 +218,6 @@ export function SettingsPage() {
     if (fields?.port.source !== 'env') payload.port = nasForm.port;
     if (fields?.user.source !== 'env') payload.user = nasForm.user;
     if (fields?.keyPath.source !== 'env') payload.keyPath = nasForm.keyPath;
-    return payload;
-  };
-
-  const buildQbitPayload = (): Record<string, unknown> => {
-    const fields = integrationsApi.data?.modules.qbittorrent.fields;
-    const payload: Record<string, unknown> = {};
-    if (fields?.url.source !== 'env') payload.url = qbitForm.url;
-    if (fields?.username.source !== 'env') payload.username = qbitForm.username;
-    if (fields?.password.source !== 'env') {
-      if (qbitForm.clearPassword) {
-        payload.password = null;
-      } else if (qbitForm.password.length > 0) {
-        payload.password = qbitForm.password;
-      }
-    }
     return payload;
   };
 
@@ -169,19 +235,14 @@ export function SettingsPage() {
     return payload;
   };
 
-  const handleSave = async (moduleName: IntegrationModuleName) => {
+  const handleSave = async (moduleName: EditableIntegrationModule) => {
     setModuleFeedback(moduleName, {
       saving: true,
       saveSuccess: undefined,
       saveError: undefined,
     });
 
-    const payload =
-      moduleName === 'nas'
-        ? buildNasPayload()
-        : moduleName === 'qbittorrent'
-          ? buildQbitPayload()
-          : buildMpPayload();
+    const payload = moduleName === 'nas' ? buildNasPayload() : buildMpPayload();
 
     try {
       await saveIntegrationModule(moduleName, payload);
@@ -200,18 +261,13 @@ export function SettingsPage() {
     }
   };
 
-  const handleTest = async (moduleName: IntegrationModuleName) => {
+  const handleTest = async (moduleName: EditableIntegrationModule) => {
     setModuleFeedback(moduleName, {
       testing: true,
       testResult: undefined,
     });
 
-    const payload =
-      moduleName === 'nas'
-        ? buildNasPayload()
-        : moduleName === 'qbittorrent'
-          ? buildQbitPayload()
-          : buildMpPayload();
+    const payload = moduleName === 'nas' ? buildNasPayload() : buildMpPayload();
 
     try {
       const result = await testIntegrationModule(moduleName, payload);
@@ -231,8 +287,173 @@ export function SettingsPage() {
     }
   };
 
+  const openAddDownloaderForm = () => {
+    setDlForm(EMPTY_DOWNLOADER_FORM);
+    setDlFormError(null);
+    setDlFormTestResult(null);
+    setDlFormOpen(true);
+  };
+
+  const openEditDownloaderForm = (item: DownloaderPublicConfig) => {
+    setDlForm({
+      id: item.id,
+      name: item.name,
+      type: item.type,
+      url: item.url,
+      username: item.username,
+      password: '',
+      passwordSet: item.passwordSet,
+      clearPassword: false,
+      tags: [...item.tags],
+      enabled: item.enabled,
+    });
+    setDlFormError(null);
+    setDlFormTestResult(null);
+    setDlFormOpen(true);
+  };
+
+  const toggleFormTag = (tag: DownloaderTag) => {
+    setDlForm((prev) => ({
+      ...prev,
+      tags: prev.tags.includes(tag) ? prev.tags.filter((t) => t !== tag) : [...prev.tags, tag],
+    }));
+  };
+
+  const handleSaveDownloaderForm = async (event: FormEvent) => {
+    event.preventDefault();
+    setDlFormError(null);
+    setDlActionFeedback({});
+
+    const trimmedName = dlForm.name.trim();
+    const trimmedUrl = dlForm.url.trim();
+    if (!trimmedName) {
+      setDlFormError('请输入实例名称');
+      return;
+    }
+    if (!trimmedUrl) {
+      setDlFormError('请输入下载器地址');
+      return;
+    }
+
+    const currentEditable = (downloadersApi.data?.downloaders ?? []).filter(
+      (item) => !item.readonly && item.source === 'file',
+    );
+    const nextPayload: DownloaderInput[] = currentEditable.map(toDownloaderInput);
+
+    const editedRecord: DownloaderInput = {
+      ...(dlForm.id ? { id: dlForm.id } : {}),
+      name: trimmedName,
+      type: dlForm.type,
+      url: trimmedUrl,
+      username: dlForm.username.trim(),
+      tags: dlForm.tags,
+      enabled: dlForm.enabled,
+      ...(dlForm.clearPassword
+        ? { password: null }
+        : dlForm.password.length > 0
+          ? { password: dlForm.password }
+          : {}),
+    };
+
+    if (dlForm.id) {
+      const idx = nextPayload.findIndex((item) => item.id === dlForm.id);
+      if (idx >= 0) {
+        nextPayload[idx] = editedRecord;
+      } else {
+        nextPayload.push(editedRecord);
+      }
+    } else {
+      nextPayload.push(editedRecord);
+    }
+
+    setDlSaving(true);
+    try {
+      await saveDownloaders(nextPayload);
+      setDlFormOpen(false);
+      setDlActionFeedback({ success: '已加密保存下载器配置' });
+      await Promise.all([downloadersApi.refetch(), statusApi.refetch()]);
+    } catch (err) {
+      setDlFormError(err instanceof Error ? err.message : '保存下载器失败');
+    } finally {
+      setDlSaving(false);
+    }
+  };
+
+  const handleDeleteDownloader = async (targetId: string) => {
+    setDlActionFeedback({});
+    const nextPayload = (downloadersApi.data?.downloaders ?? [])
+      .filter((item) => !item.readonly && item.source === 'file' && item.id !== targetId)
+      .map(toDownloaderInput);
+
+    setDlSaving(true);
+    try {
+      await saveDownloaders(nextPayload);
+      setDlConfirmDeleteId(null);
+      if (dlForm.id === targetId) {
+        setDlFormOpen(false);
+      }
+      setDlActionFeedback({ success: '已移除下载器实例并保存' });
+      await Promise.all([downloadersApi.refetch(), statusApi.refetch()]);
+    } catch (err) {
+      setDlActionFeedback({ error: err instanceof Error ? err.message : '删除下载器失败' });
+    } finally {
+      setDlSaving(false);
+    }
+  };
+
+  const handleTestDownloaderItem = async (item: DownloaderPublicConfig) => {
+    setDlTestingIds((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      const res = await testDownloaderConnection({
+        id: item.id,
+        type: item.type,
+        url: item.url,
+        username: item.username,
+      });
+      setDlTestResultsById((prev) => ({ ...prev, [item.id]: res }));
+    } catch (err) {
+      setDlTestResultsById((prev) => ({
+        ...prev,
+        [item.id]: {
+          ok: false,
+          type: item.type,
+          durationMs: 0,
+          error: err instanceof Error ? err.message : '测试请求失败',
+        },
+      }));
+    } finally {
+      setDlTestingIds((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  const handleTestDownloaderForm = async () => {
+    setDlFormTestResult(null);
+    setDlTestingForm(true);
+    try {
+      const res = await testDownloaderConnection({
+        ...(dlForm.id ? { id: dlForm.id } : {}),
+        type: dlForm.type,
+        url: dlForm.url.trim(),
+        username: dlForm.username.trim(),
+        ...(dlForm.password ? { password: dlForm.password } : {}),
+      });
+      setDlFormTestResult(res);
+    } catch (err) {
+      setDlFormTestResult({
+        ok: false,
+        type: dlForm.type,
+        durationMs: 0,
+        error: err instanceof Error ? err.message : '测试请求失败',
+      });
+    } finally {
+      setDlTestingForm(false);
+    }
+  };
+
   const modules = statusApi.data ? Object.values(statusApi.data.modules) : [];
   const integrations = integrationsApi.data;
+  const downloadersData = downloadersApi.data;
+  const downloaderList = downloadersData?.downloaders ?? [];
 
   return (
     <div className="space-y-8">
@@ -245,11 +466,13 @@ export function SettingsPage() {
             variant="outline"
             size="sm"
             onClick={handleRefreshAll}
-            disabled={statusApi.loading || integrationsApi.loading}
+            disabled={statusApi.loading || integrationsApi.loading || downloadersApi.loading}
           >
             <RotateCw
               className={
-                statusApi.loading || integrationsApi.loading ? 'size-4 animate-spin' : 'size-4'
+                statusApi.loading || integrationsApi.loading || downloadersApi.loading
+                  ? 'size-4 animate-spin'
+                  : 'size-4'
               }
               aria-hidden="true"
             />
@@ -259,7 +482,7 @@ export function SettingsPage() {
       />
 
       {/* 集成配置区 */}
-      {integrations || integrationsApi.error ? (
+      {integrations || downloadersData || integrationsApi.error ? (
         <section aria-labelledby="integrations-heading" className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -296,7 +519,7 @@ export function SettingsPage() {
               onRetry={() => void integrationsApi.refetch()}
             />
           ) : integrations ? (
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-2">
               {/* NAS 集成卡片 */}
               <Card>
                 <CardHeader className="pb-3">
@@ -393,140 +616,6 @@ export function SettingsPage() {
                     >
                       <Save className="size-3.5" aria-hidden="true" />
                       <span>{feedback.nas.saving ? '保存中...' : '保存'}</span>
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* qBittorrent 集成卡片 */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <CardTitle className="text-base">qBittorrent</CardTitle>
-                    <StatusBadge
-                      status={
-                        integrations.modules.qbittorrent.configured ? 'configured' : 'unconfigured'
-                      }
-                      label={integrations.modules.qbittorrent.configured ? '已配置' : '未配置'}
-                    />
-                  </div>
-                  <CardDescription>qBittorrent WebUI v2 只读监控连接配置。</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="qbit-url">WebUI 地址</Label>
-                      <EnvManagedBadge
-                        source={integrations.modules.qbittorrent.fields.url.source}
-                      />
-                    </div>
-                    <Input
-                      id="qbit-url"
-                      value={qbitForm.url}
-                      placeholder="例如 http://192.0.2.10:8080"
-                      readOnly={integrations.modules.qbittorrent.fields.url.source === 'env'}
-                      disabled={integrations.modules.qbittorrent.fields.url.source === 'env'}
-                      onChange={(e) => setQbitForm((prev) => ({ ...prev, url: e.target.value }))}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="qbit-username">用户名</Label>
-                      <EnvManagedBadge
-                        source={integrations.modules.qbittorrent.fields.username.source}
-                      />
-                    </div>
-                    <Input
-                      id="qbit-username"
-                      value={qbitForm.username}
-                      placeholder="例如 demo"
-                      readOnly={integrations.modules.qbittorrent.fields.username.source === 'env'}
-                      disabled={integrations.modules.qbittorrent.fields.username.source === 'env'}
-                      onChange={(e) =>
-                        setQbitForm((prev) => ({ ...prev, username: e.target.value }))
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor="qbit-password">密码</Label>
-                      <div className="flex items-center gap-1.5">
-                        <EnvManagedBadge
-                          source={integrations.modules.qbittorrent.fields.password.source}
-                        />
-                        {integrations.modules.qbittorrent.fields.password.source !== 'env' &&
-                        (integrations.modules.qbittorrent.fields.password.set ||
-                          qbitForm.clearPassword) ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-xs"
-                            aria-label={
-                              qbitForm.clearPassword
-                                ? '取消清除 qBittorrent 密码'
-                                : '清除 qBittorrent 密码'
-                            }
-                            onClick={() =>
-                              setQbitForm((prev) => ({
-                                ...prev,
-                                password: '',
-                                clearPassword: !prev.clearPassword,
-                              }))
-                            }
-                          >
-                            <Trash2 className="size-3" aria-hidden="true" />
-                            <span>{qbitForm.clearPassword ? '取消清除' : '清除'}</span>
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                    <Input
-                      id="qbit-password"
-                      type="password"
-                      value={qbitForm.password}
-                      placeholder={
-                        qbitForm.clearPassword
-                          ? '已标记清除，保存后生效'
-                          : integrations.modules.qbittorrent.fields.password.set
-                            ? '已设置（留空则不修改）'
-                            : '未设置'
-                      }
-                      readOnly={integrations.modules.qbittorrent.fields.password.source === 'env'}
-                      disabled={integrations.modules.qbittorrent.fields.password.source === 'env'}
-                      onChange={(e) =>
-                        setQbitForm((prev) => ({
-                          ...prev,
-                          password: e.target.value,
-                          clearPassword: false,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <IntegrationFeedbackBanner feedback={feedback.qbittorrent} />
-
-                  <div className="flex items-center gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={feedback.qbittorrent.testing}
-                      onClick={() => void handleTest('qbittorrent')}
-                    >
-                      <PlugZap className="size-3.5" aria-hidden="true" />
-                      <span>{feedback.qbittorrent.testing ? '测试中...' : '测试连接'}</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={feedback.qbittorrent.saving}
-                      onClick={() => void handleSave('qbittorrent')}
-                    >
-                      <Save className="size-3.5" aria-hidden="true" />
-                      <span>{feedback.qbittorrent.saving ? '保存中...' : '保存'}</span>
                     </Button>
                   </div>
                 </CardContent>
@@ -645,6 +734,390 @@ export function SettingsPage() {
                 </CardContent>
               </Card>
             </div>
+          ) : null}
+
+          {/* 多实例下载器配置卡片 */}
+          {downloadersData ? (
+            <Card>
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-3">
+                <div>
+                  <CardTitle className="text-base">下载器（qBittorrent / Transmission）</CardTitle>
+                  <CardDescription>
+                    支持多实例只读监控与用途标签分类；密码经 AES-256-GCM 加密存储且永不回显。
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={openAddDownloaderForm}
+                  disabled={dlSaving || downloadersData.mock}
+                >
+                  <Plus className="size-4" aria-hidden="true" />
+                  <span>新增下载器</span>
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {dlActionFeedback.success ? (
+                  <div
+                    role="status"
+                    className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400"
+                  >
+                    <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span>{dlActionFeedback.success}</span>
+                  </div>
+                ) : null}
+                {dlActionFeedback.error ? (
+                  <div
+                    role="alert"
+                    className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400"
+                  >
+                    <XCircle className="size-3.5 shrink-0" aria-hidden="true" />
+                    <span>{dlActionFeedback.error}</span>
+                  </div>
+                ) : null}
+
+                {dlFormOpen ? (
+                  <form
+                    onSubmit={(e) => void handleSaveDownloaderForm(e)}
+                    className="space-y-4 rounded-xl border border-border bg-muted/20 p-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-foreground">
+                        {dlForm.id ? '编辑下载器实例' : '新增下载器实例'}
+                      </h3>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="dl-name">实例名称</Label>
+                        <Input
+                          id="dl-name"
+                          value={dlForm.name}
+                          placeholder="例如 qB 下载 / TR 保种"
+                          onChange={(e) => setDlForm((prev) => ({ ...prev, name: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="dl-type">下载器类型</Label>
+                        <select
+                          id="dl-type"
+                          value={dlForm.type}
+                          onChange={(e) =>
+                            setDlForm((prev) => ({
+                              ...prev,
+                              type: e.target.value as DownloaderType,
+                            }))
+                          }
+                          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        >
+                          <option value="qbittorrent">qBittorrent</option>
+                          <option value="transmission">Transmission</option>
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label htmlFor="dl-url">WebUI / RPC 地址</Label>
+                        <Input
+                          id="dl-url"
+                          value={dlForm.url}
+                          placeholder={
+                            dlForm.type === 'qbittorrent'
+                              ? '例如 http://192.0.2.10:8080'
+                              : '例如 http://192.0.2.12:9091'
+                          }
+                          onChange={(e) => setDlForm((prev) => ({ ...prev, url: e.target.value }))}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <Label htmlFor="dl-username">用户名</Label>
+                        <Input
+                          id="dl-username"
+                          value={dlForm.username}
+                          placeholder="例如 demo（Transmission 无认证可留空）"
+                          onChange={(e) =>
+                            setDlForm((prev) => ({ ...prev, username: e.target.value }))
+                          }
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label htmlFor="dl-password">密码</Label>
+                          {dlForm.id && (dlForm.passwordSet || dlForm.clearPassword) ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 px-2 text-xs"
+                              aria-label={
+                                dlForm.clearPassword ? '取消清除下载器密码' : '清除下载器密码'
+                              }
+                              onClick={() =>
+                                setDlForm((prev) => ({
+                                  ...prev,
+                                  password: '',
+                                  clearPassword: !prev.clearPassword,
+                                }))
+                              }
+                            >
+                              <Trash2 className="size-3" aria-hidden="true" />
+                              <span>{dlForm.clearPassword ? '取消清除' : '清除'}</span>
+                            </Button>
+                          ) : null}
+                        </div>
+                        <Input
+                          id="dl-password"
+                          type="password"
+                          value={dlForm.password}
+                          placeholder={
+                            dlForm.clearPassword
+                              ? '已标记清除，保存后生效'
+                              : dlForm.passwordSet
+                                ? '已设置（留空则不修改）'
+                                : '未设置'
+                          }
+                          onChange={(e) =>
+                            setDlForm((prev) => ({
+                              ...prev,
+                              password: e.target.value,
+                              clearPassword: false,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-medium text-foreground">用途标签</span>
+                        <div className="flex flex-wrap items-center gap-3">
+                          {DOWNLOADER_TAG_OPTIONS.map((opt) => (
+                            <label
+                              key={opt.value}
+                              className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={dlForm.tags.includes(opt.value)}
+                                onChange={() => toggleFormTag(opt.value)}
+                                className="size-3.5 rounded border-input accent-primary"
+                              />
+                              <span>{opt.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
+                        <input
+                          id="dl-enabled"
+                          type="checkbox"
+                          checked={dlForm.enabled}
+                          onChange={(e) =>
+                            setDlForm((prev) => ({ ...prev, enabled: e.target.checked }))
+                          }
+                          className="size-3.5 rounded border-input accent-primary"
+                        />
+                        <span>启用此实例</span>
+                      </label>
+                    </div>
+
+                    {dlFormError ? (
+                      <div
+                        role="alert"
+                        className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400"
+                      >
+                        <XCircle className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span>{dlFormError}</span>
+                      </div>
+                    ) : null}
+
+                    {dlFormTestResult ? (
+                      <div
+                        role={dlFormTestResult.ok ? 'status' : 'alert'}
+                        className={
+                          dlFormTestResult.ok
+                            ? 'flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400'
+                            : 'flex items-center gap-1.5 rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400'
+                        }
+                      >
+                        {dlFormTestResult.ok ? (
+                          <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
+                        ) : (
+                          <XCircle className="size-3.5 shrink-0" aria-hidden="true" />
+                        )}
+                        <span>
+                          {dlFormTestResult.ok
+                            ? `${dlFormTestResult.detail ?? '连接成功'}（耗时 ${dlFormTestResult.durationMs} ms）`
+                            : `${dlFormTestResult.error ?? '连接失败'}（耗时 ${dlFormTestResult.durationMs} ms）`}
+                        </span>
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={dlTestingForm || dlSaving}
+                        onClick={() => void handleTestDownloaderForm()}
+                      >
+                        <PlugZap className="size-3.5" aria-hidden="true" />
+                        <span>{dlTestingForm ? '测试中...' : '测试连接'}</span>
+                      </Button>
+                      <Button type="submit" size="sm" disabled={dlSaving}>
+                        <Save className="size-3.5" aria-hidden="true" />
+                        <span>{dlSaving ? '保存中...' : '保存实例'}</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={dlSaving}
+                        onClick={() => setDlFormOpen(false)}
+                      >
+                        取消
+                      </Button>
+                    </div>
+                  </form>
+                ) : null}
+
+                {downloaderList.length === 0 ? (
+                  <EmptyState
+                    title="暂未配置下载器实例"
+                    description="点击右上角“新增下载器”添加 qBittorrent 或 Transmission 实例。"
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {downloaderList.map((inst) => {
+                      const testResult = dlTestResultsById[inst.id];
+                      const testingItem = Boolean(dlTestingIds[inst.id]);
+                      const confirmingDelete = dlConfirmDeleteId === inst.id;
+
+                      return (
+                        <div
+                          key={inst.id}
+                          className="space-y-2 rounded-lg border border-border/80 bg-muted/20 p-3.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="min-w-0 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <DownloaderTypeBadge type={inst.type} />
+                                <span className="font-medium text-foreground">{inst.name}</span>
+                                <StatusBadge
+                                  status={inst.enabled ? 'success' : 'unknown'}
+                                  label={inst.enabled ? '已启用' : '已停用'}
+                                />
+                                {inst.source === 'env' ? (
+                                  <StatusBadge status="info" label="由 .env 管理" showDot={false} />
+                                ) : null}
+                                {inst.tags.map((tag) => (
+                                  <DownloaderTagBadge key={tag} tag={tag} />
+                                ))}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                <span>{getDownloaderTypeFullName(inst.type)}</span>
+                                <span className="font-mono">{inst.url}</span>
+                                <span>用户名：{inst.username || '（未填）'}</span>
+                                <span>密码：{inst.passwordSet ? '已设置' : '未设置'}</span>
+                              </div>
+                            </div>
+
+                            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                aria-label={`测试连接 ${inst.name}`}
+                                disabled={testingItem || dlSaving}
+                                onClick={() => void handleTestDownloaderItem(inst)}
+                              >
+                                <PlugZap className="size-3.5" aria-hidden="true" />
+                                <span>{testingItem ? '测试中...' : '测试连接'}</span>
+                              </Button>
+
+                              {!inst.readonly ? (
+                                confirmingDelete ? (
+                                  <div className="inline-flex items-center gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      size="sm"
+                                      disabled={dlSaving}
+                                      onClick={() => void handleDeleteDownloader(inst.id)}
+                                    >
+                                      确认删除
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={dlSaving}
+                                      onClick={() => setDlConfirmDeleteId(null)}
+                                    >
+                                      取消
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      aria-label={`编辑 ${inst.name}`}
+                                      disabled={dlSaving}
+                                      onClick={() => openEditDownloaderForm(inst)}
+                                    >
+                                      <Pencil className="size-3.5" aria-hidden="true" />
+                                      <span>编辑</span>
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      aria-label={`删除 ${inst.name}`}
+                                      disabled={dlSaving}
+                                      onClick={() => setDlConfirmDeleteId(inst.id)}
+                                    >
+                                      <Trash2 className="size-3.5" aria-hidden="true" />
+                                      <span>删除</span>
+                                    </Button>
+                                  </>
+                                )
+                              ) : null}
+                            </div>
+                          </div>
+
+                          {testResult ? (
+                            <div
+                              role={testResult.ok ? 'status' : 'alert'}
+                              className={
+                                testResult.ok
+                                  ? 'flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-400'
+                                  : 'flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-400'
+                              }
+                            >
+                              {testResult.ok ? (
+                                <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
+                              ) : (
+                                <XCircle className="size-3.5 shrink-0" aria-hidden="true" />
+                              )}
+                              <span>
+                                {testResult.ok
+                                  ? `${testResult.detail ?? '连接成功'}（耗时 ${testResult.durationMs} ms）`
+                                  : `${testResult.error ?? '连接失败'}（耗时 ${testResult.durationMs} ms）`}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           ) : null}
         </section>
       ) : null}

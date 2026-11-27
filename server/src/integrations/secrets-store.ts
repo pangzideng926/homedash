@@ -6,6 +6,10 @@ import { type AppConfig, type ConfigKey, type SafeLogger } from '../config/index
 import { resolveRepoRelativePath } from '../devices/store.js';
 import { decryptSecret, deriveIntegrationKey, encryptSecret } from './crypto.js';
 import type {
+  DownloaderPublicConfig,
+  DownloadersListResponse,
+  DownloaderTag,
+  DownloaderType,
   EncryptedFieldValue,
   IntegrationFieldSource,
   IntegrationModuleName,
@@ -16,11 +20,18 @@ import type {
   PublicIntegrationField,
   PublicSecretIntegrationField,
   QbittorrentTestOverride,
+  ResolvedDownloaderInstance,
+  ResolvedDownloadersConfig,
   ResolvedMoviepilotConfig,
   ResolvedNasConfig,
   ResolvedQbittorrentConfig,
+  SaveDownloadersResult,
   SaveIntegrationResult,
+  StoredDownloaderRecord,
 } from './types.js';
+
+const DOWNLOADER_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+const DOWNLOADER_TAGS = ['download', 'brush', 'seed'] as const;
 
 const encryptedFieldSchema = z.object({
   v: z.literal(1),
@@ -53,10 +64,29 @@ const fileMoviepilotSchema = z
   })
   .optional();
 
+const fileDownloaderSchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  type: z.enum(['qbittorrent', 'transmission']),
+  url: z.string().trim().min(1),
+  username: z.string().default(''),
+  password: encryptedFieldSchema.optional(),
+  tags: z.array(z.enum(DOWNLOADER_TAGS)).default([]),
+  enabled: z.boolean().default(true),
+});
+
+const fileDockerSchema = z
+  .object({
+    protectedContainers: z.array(z.string().trim().min(1)).optional(),
+  })
+  .optional();
+
 const integrationsFileSchema = z.object({
   nas: fileNasSchema,
   qbittorrent: fileQbittorrentSchema,
   moviepilot: fileMoviepilotSchema,
+  downloaders: z.array(fileDownloaderSchema).optional(),
+  docker: fileDockerSchema,
 });
 
 function isValidHttpUrl(val: string): boolean {
@@ -138,6 +168,37 @@ const moviepilotPutSchema = z.object({
   apiToken: optionalSecretUpdate,
 });
 
+const downloaderTagSchema = z.enum(DOWNLOADER_TAGS, {
+  message: '用途标签必须是 download、brush 或 seed 之一',
+});
+
+const downloaderPutItemSchema = z.object({
+  id: z.preprocess((val) => {
+    if (typeof val !== 'string') return val;
+    const trimmed = val.trim();
+    return trimmed === '' ? undefined : trimmed;
+  }, z.string().regex(DOWNLOADER_ID_REGEX, '实例 ID 仅支持字母、数字、下划线和连字符，且必须以字母或数字开头').optional()),
+  name: z.string({ message: '实例名称必须填写' }).trim().min(1, '实例名称不能为空'),
+  type: z.enum(['qbittorrent', 'transmission'], {
+    message: '下载器类型必须是 qbittorrent 或 transmission',
+  }),
+  url: z
+    .string({ message: '服务地址必须填写' })
+    .trim()
+    .refine(isValidHttpUrl, { message: '服务地址必须是有效的 http:// 或 https:// 地址' }),
+  username: z.preprocess(
+    (val) => (val === undefined || val === null ? '' : val),
+    z.string({ message: '用户名必须是字符串' }).trim(),
+  ),
+  password: optionalSecretUpdate,
+  tags: z.array(downloaderTagSchema, { message: 'tags 必须是数组' }).default([]),
+  enabled: z.boolean({ message: 'enabled 必须是布尔值' }).default(true),
+});
+
+const downloadersPutPayloadSchema = z.object({
+  downloaders: z.array(downloaderPutItemSchema, { message: 'downloaders 必须是数组' }),
+});
+
 interface FileReadState {
   data: IntegrationsFileData;
   error?: string;
@@ -146,9 +207,15 @@ interface FileReadState {
 export interface IntegrationsStore {
   getView: () => IntegrationsViewResponse;
   saveModule: (moduleName: string, rawBody: unknown) => SaveIntegrationResult;
+  getDownloadersView: () => DownloadersListResponse;
+  saveDownloaders: (rawBody: unknown) => SaveDownloadersResult;
   resolveNasConfig: (override?: NasTestOverride) => ResolvedNasConfig;
   resolveQbittorrentConfig: (override?: QbittorrentTestOverride) => ResolvedQbittorrentConfig;
+  resolveDownloadersConfig: () => ResolvedDownloadersConfig;
+  resolveDownloaderById: (id: string) => ResolvedDownloaderInstance | null;
   resolveMoviepilotConfig: (override?: MoviepilotTestOverride) => ResolvedMoviepilotConfig;
+  getProtectedDockerContainers: () => string[];
+  hasConfiguredDownloaders: () => boolean;
   getMergedKeyPresence: () => Partial<Record<ConfigKey, boolean>>;
   collectRuntimeSecrets: () => string[];
 }
@@ -311,6 +378,201 @@ export function createIntegrationsStore(
     return decryptSecret(field, encryptionKey);
   }
 
+  function isDownloadersMockEnabled(): boolean {
+    return Boolean(config.downloaders?.DOWNLOADERS_MOCK || config.qbittorrent?.QBIT_MOCK);
+  }
+
+  function hasEnvQbittorrent(): boolean {
+    return Boolean(
+      config.keyPresence.QBIT_URL ||
+      config.keyPresence.QBIT_USERNAME ||
+      config.keyPresence.QBIT_PASSWORD,
+    );
+  }
+
+  function buildMockDownloaders(includePasswords: boolean): ResolvedDownloaderInstance[] {
+    return [
+      {
+        id: 'mock-qb-download',
+        name: 'qB 下载',
+        type: 'qbittorrent',
+        url: 'http://192.0.2.10:8080',
+        username: 'demo',
+        ...(includePasswords ? { password: 'demo-mock-password' } : {}),
+        tags: ['download'],
+        enabled: true,
+        source: 'mock',
+        readonly: true,
+      },
+      {
+        id: 'mock-qb-brush',
+        name: 'qB 刷流',
+        type: 'qbittorrent',
+        url: 'http://192.0.2.11:8080',
+        username: 'demo',
+        ...(includePasswords ? { password: 'demo-mock-password' } : {}),
+        tags: ['brush'],
+        enabled: true,
+        source: 'mock',
+        readonly: true,
+      },
+      {
+        id: 'mock-tr-seed',
+        name: 'TR 保种',
+        type: 'transmission',
+        url: 'http://192.0.2.12:9091',
+        username: 'demo',
+        ...(includePasswords ? { password: 'demo-mock-password' } : {}),
+        tags: ['seed'],
+        enabled: true,
+        source: 'mock',
+        readonly: true,
+      },
+    ];
+  }
+
+  function buildLegacyMigratedInstance(
+    state: FileReadState,
+    includePassword: boolean,
+  ): { instance: ResolvedDownloaderInstance; passwordSet: boolean } | null {
+    const envQbit = config.qbittorrent;
+    const fileQbit = state.data.qbittorrent;
+    const envHasAny = hasEnvQbittorrent();
+    const fileHasAny = Boolean(fileQbit?.url || fileQbit?.username || fileQbit?.password);
+    if (!envHasAny && !fileHasAny) {
+      return null;
+    }
+
+    const url = envQbit?.QBIT_URL ?? fileQbit?.url ?? '';
+    const username = envQbit?.QBIT_USERNAME ?? fileQbit?.username ?? '';
+    const passwordSet = Boolean(envQbit?.QBIT_PASSWORD || fileQbit?.password);
+    let password: string | undefined;
+    if (includePassword) {
+      if (envQbit?.QBIT_PASSWORD) {
+        password = envQbit.QBIT_PASSWORD;
+      } else {
+        password = tryDecryptField(fileQbit?.password);
+      }
+    }
+
+    return {
+      passwordSet,
+      instance: {
+        id: 'qbittorrent-default',
+        name: 'qBittorrent',
+        type: 'qbittorrent',
+        url,
+        username,
+        ...(password !== undefined ? { password } : {}),
+        tags: [],
+        enabled: true,
+        source: envHasAny ? 'env' : 'file',
+        readonly: envHasAny,
+      },
+    };
+  }
+
+  function resolveDownloaderEntries(
+    state: FileReadState,
+    includePassword: boolean,
+  ): Array<{ instance: ResolvedDownloaderInstance; passwordSet: boolean }> {
+    const fileList = state.data.downloaders;
+    if (fileList && fileList.length > 0) {
+      const entries: Array<{ instance: ResolvedDownloaderInstance; passwordSet: boolean }> =
+        fileList.map((item) => {
+          const password = includePassword ? tryDecryptField(item.password) : undefined;
+          return {
+            passwordSet: Boolean(item.password),
+            instance: {
+              id: item.id,
+              name: item.name,
+              type: item.type,
+              url: item.url,
+              username: item.username,
+              ...(password !== undefined ? { password } : {}),
+              tags: [...item.tags],
+              enabled: item.enabled,
+              source: 'file',
+              readonly: false,
+            },
+          };
+        });
+
+      // 若 .env 配置了旧版 QBIT_* 且文件列表里未包含 qbittorrent-default，仍保留只读 env 实例
+      if (hasEnvQbittorrent() && !entries.some((e) => e.instance.id === 'qbittorrent-default')) {
+        const legacyEnv = buildLegacyMigratedInstance(state, includePassword);
+        if (legacyEnv) {
+          entries.unshift(legacyEnv);
+        }
+      }
+
+      return entries;
+    }
+
+    const migrated = buildLegacyMigratedInstance(state, includePassword);
+    return migrated ? [migrated] : [];
+  }
+
+  function getDownloadersViewFromState(state: FileReadState): DownloadersListResponse {
+    const mock = isDownloadersMockEnabled();
+    if (mock) {
+      const mockList = buildMockDownloaders(false);
+      return {
+        configured: true,
+        fileConfigured: Boolean(config.app.INTEGRATIONS_FILE),
+        mock: true,
+        downloaders: mockList.map((item) => ({
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          url: item.url,
+          username: item.username,
+          passwordSet: true,
+          tags: item.tags,
+          enabled: item.enabled,
+          source: 'mock',
+          readonly: true,
+          readonlyReason: '当前处于模拟模式（DOWNLOADERS_MOCK / QBIT_MOCK）',
+        })),
+        ...(state.error ? { error: state.error } : {}),
+      };
+    }
+
+    const entries = resolveDownloaderEntries(state, false);
+    const downloaders: DownloaderPublicConfig[] = entries.map(({ instance, passwordSet }) => ({
+      id: instance.id,
+      name: instance.name,
+      type: instance.type,
+      url: instance.url,
+      username: instance.username,
+      passwordSet,
+      tags: instance.tags,
+      enabled: instance.enabled,
+      source: instance.source,
+      readonly: instance.readonly,
+      ...(instance.source === 'env' ? { readonlyReason: '由 .env 管理' } : {}),
+    }));
+
+    return {
+      configured: downloaders.length > 0,
+      fileConfigured: Boolean(config.app.INTEGRATIONS_FILE),
+      mock: false,
+      downloaders,
+      ...(state.error ? { error: state.error } : {}),
+    };
+  }
+
+  function generateStableDownloaderId(type: DownloaderType, usedIds: Set<string>): string {
+    const prefix = type === 'qbittorrent' ? 'qb' : 'tr';
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const candidate = `${prefix}-${randomBytes(4).toString('hex')}`;
+      if (!usedIds.has(candidate)) {
+        return candidate;
+      }
+    }
+    return `${prefix}-${Date.now().toString(36)}`;
+  }
+
   function getViewFromState(state: FileReadState): IntegrationsViewResponse {
     const nasEnv = config.nas;
     const nasFile = state.data.nas;
@@ -408,6 +670,8 @@ export function createIntegrationsStore(
         ...(state.data.nas ? { nas: { ...state.data.nas } } : {}),
         ...(state.data.qbittorrent ? { qbittorrent: { ...state.data.qbittorrent } } : {}),
         ...(state.data.moviepilot ? { moviepilot: { ...state.data.moviepilot } } : {}),
+        ...(state.data.downloaders ? { downloaders: [...state.data.downloaders] } : {}),
+        ...(state.data.docker ? { docker: { ...state.data.docker } } : {}),
       };
 
       if (moduleName === 'nas') {
@@ -585,6 +849,134 @@ export function createIntegrationsStore(
       return { ok: true, data: getViewFromState({ data: nextData }) };
     },
 
+    getDownloadersView(): DownloadersListResponse {
+      return getDownloadersViewFromState(readFileState());
+    },
+
+    saveDownloaders(rawBody: unknown): SaveDownloadersResult {
+      const filePath = getConfiguredFilePath();
+      if (!filePath) {
+        return {
+          ok: false,
+          status: 400,
+          error: '尚未配置集成凭据文件（INTEGRATIONS_FILE），无法保存',
+        };
+      }
+
+      const state = readFileState();
+      if (state.error) {
+        return { ok: false, status: 500, error: state.error };
+      }
+
+      const parsed = downloadersPutPayloadSchema.safeParse(rawBody);
+      if (!parsed.success) {
+        const details = parsed.error.issues.map((issue) => {
+          const p = issue.path.length > 0 ? `[${issue.path.join('.')}] ` : '';
+          return `${p}${issue.message}`;
+        });
+        return {
+          ok: false,
+          status: 400,
+          error: `参数校验失败：${details[0] ?? '请检查输入格式'}`,
+          details,
+        };
+      }
+
+      const envManaged = hasEnvQbittorrent();
+      const existingById = new Map<string, StoredDownloaderRecord>();
+      for (const existing of state.data.downloaders ?? []) {
+        existingById.set(existing.id, existing);
+      }
+
+      const usedIds = new Set<string>();
+      for (const item of parsed.data.downloaders) {
+        if (item.id) {
+          if (usedIds.has(item.id)) {
+            return {
+              ok: false,
+              status: 400,
+              error: `下载器实例 ID 重复：${item.id}`,
+            };
+          }
+          usedIds.add(item.id);
+        }
+      }
+
+      const normalizedRecords: StoredDownloaderRecord[] = [];
+      for (const item of parsed.data.downloaders) {
+        const id = item.id ?? generateStableDownloaderId(item.type, usedIds);
+        usedIds.add(id);
+
+        if (envManaged && id === 'qbittorrent-default') {
+          return {
+            ok: false,
+            status: 409,
+            error: 'qbittorrent-default：该项由 .env 管理',
+          };
+        }
+
+        const dedupTags: DownloaderTag[] = [];
+        for (const tag of item.tags) {
+          if (!dedupTags.includes(tag)) {
+            dedupTags.push(tag);
+          }
+        }
+
+        const existingRecord = existingById.get(id);
+        const legacyPassword =
+          !state.data.downloaders?.length && id === 'qbittorrent-default'
+            ? state.data.qbittorrent?.password
+            : undefined;
+        const previousEncrypted = existingRecord?.password ?? legacyPassword;
+
+        let nextEncryptedPassword: EncryptedFieldValue | undefined;
+        if (item.password === null) {
+          nextEncryptedPassword = undefined;
+        } else if (item.password !== undefined) {
+          nextEncryptedPassword = encryptSecret(item.password, encryptionKey);
+        } else {
+          nextEncryptedPassword = previousEncrypted;
+        }
+
+        normalizedRecords.push({
+          id,
+          name: item.name,
+          type: item.type,
+          url: item.url,
+          username: item.username,
+          ...(nextEncryptedPassword ? { password: nextEncryptedPassword } : {}),
+          tags: dedupTags,
+          enabled: item.enabled,
+        });
+      }
+
+      const nextData: IntegrationsFileData = {
+        ...(state.data.nas ? { nas: { ...state.data.nas } } : {}),
+        ...(state.data.qbittorrent ? { qbittorrent: { ...state.data.qbittorrent } } : {}),
+        ...(state.data.moviepilot ? { moviepilot: { ...state.data.moviepilot } } : {}),
+        ...(state.data.docker ? { docker: { ...state.data.docker } } : {}),
+        downloaders: normalizedRecords,
+      };
+
+      // 若旧版文件 qbittorrent 段已被迁移或删空，且不再保留 qbittorrent-default，则清理旧段防止删空后复活
+      if (!normalizedRecords.some((item) => item.id === 'qbittorrent-default')) {
+        delete nextData.qbittorrent;
+      }
+
+      try {
+        writeJsonAtomicWithBackup(filePath, nextData);
+      } catch {
+        logger?.error('保存下载器实例配置失败：写入文件异常');
+        return {
+          ok: false,
+          status: 500,
+          error: '写入集成凭据文件失败，请检查目录权限',
+        };
+      }
+
+      return { ok: true, data: getDownloadersViewFromState({ data: nextData }) };
+    },
+
     resolveNasConfig(override?: NasTestOverride): ResolvedNasConfig {
       const state = readFileState();
       const fileNas = state.data.nas;
@@ -665,6 +1057,64 @@ export function createIntegrationsStore(
       };
     },
 
+    resolveDownloadersConfig(): ResolvedDownloadersConfig {
+      const cacheSeconds =
+        config.downloaders?.DOWNLOADER_CACHE_SECONDS ??
+        config.qbittorrent?.QBIT_CACHE_SECONDS ??
+        10;
+      const timeoutMs =
+        config.downloaders?.DOWNLOADER_TIMEOUT_MS ?? config.qbittorrent?.QBIT_TIMEOUT_MS ?? 8000;
+      const mock = isDownloadersMockEnabled();
+
+      if (mock) {
+        return {
+          configured: true,
+          mock: true,
+          cacheSeconds,
+          timeoutMs,
+          instances: buildMockDownloaders(true),
+        };
+      }
+
+      const state = readFileState();
+      const entries = resolveDownloaderEntries(state, true);
+      const instances = entries.map((entry) => entry.instance);
+      return {
+        configured: instances.length > 0,
+        mock: false,
+        cacheSeconds,
+        timeoutMs,
+        instances,
+      };
+    },
+
+    resolveDownloaderById(id: string): ResolvedDownloaderInstance | null {
+      const resolved = this.resolveDownloadersConfig();
+      return resolved.instances.find((item) => item.id === id) ?? null;
+    },
+
+    getProtectedDockerContainers(): string[] {
+      const envProtected = config.nas?.DOCKER_PROTECTED_CONTAINERS ?? ['homedash'];
+      const state = readFileState();
+      const fileProtected = state.data.docker?.protectedContainers ?? [];
+      const merged: string[] = [];
+      for (const name of [...envProtected, ...fileProtected]) {
+        const trimmed = name.trim();
+        if (trimmed && !merged.includes(trimmed)) {
+          merged.push(trimmed);
+        }
+      }
+      return merged;
+    },
+
+    hasConfiguredDownloaders(): boolean {
+      if (isDownloadersMockEnabled()) {
+        return true;
+      }
+      const state = readFileState();
+      return resolveDownloaderEntries(state, false).length > 0;
+    },
+
     resolveMoviepilotConfig(override?: MoviepilotTestOverride): ResolvedMoviepilotConfig {
       const state = readFileState();
       const fileMp = state.data.moviepilot;
@@ -743,6 +1193,14 @@ export function createIntegrationsStore(
       try {
         const mp = this.resolveMoviepilotConfig();
         if (mp.apiToken) secrets.push(mp.apiToken);
+      } catch {
+        // 解密失败时忽略
+      }
+      try {
+        const downloaders = this.resolveDownloadersConfig();
+        for (const item of downloaders.instances) {
+          if (item.password) secrets.push(item.password);
+        }
       } catch {
         // 解密失败时忽略
       }
