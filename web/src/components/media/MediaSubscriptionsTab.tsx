@@ -31,17 +31,17 @@ export function MediaSubscriptionsTab({ data }: { data: MediaSubscriptionsRespon
         const latestEp = item.latestEpisode ?? item.completedEpisode ?? 0;
 
         return (
-          <Card key={String(item.id)} className="flex gap-3.5 p-3.5">
-            <div className="w-20 shrink-0">
+          <Card key={String(item.id)} className="flex min-w-0 gap-3 p-3.5 sm:gap-3.5">
+            <div className="w-16 shrink-0 sm:w-20">
               <PosterImage src={item.posterUrl} title={item.name} />
             </div>
 
             <div className="flex min-w-0 flex-1 flex-col justify-between gap-2">
               <div className="space-y-1.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
                     <h3
-                      className="truncate text-sm font-semibold text-foreground"
+                      className="break-words text-sm font-semibold text-foreground sm:truncate"
                       title={item.name}
                     >
                       {item.name}

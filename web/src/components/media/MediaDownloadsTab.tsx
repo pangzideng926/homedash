@@ -29,17 +29,20 @@ export function MediaDownloadsTab({ data }: { data: MediaDownloadsResponse }) {
         const etaText = item.eta !== null ? formatEta(item.eta) : (item.leftTime ?? '—');
 
         return (
-          <Card key={`${item.hash || item.torrentName}-${idx}`} className="flex gap-3.5 p-3.5">
+          <Card
+            key={`${item.hash || item.torrentName}-${idx}`}
+            className="flex min-w-0 gap-3 p-3.5 sm:gap-3.5"
+          >
             <div className="w-14 shrink-0">
               <PosterImage src={item.posterUrl} title={item.displayName} textClassName="text-lg" />
             </div>
 
             <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span
-                      className="truncate text-sm font-semibold text-foreground"
+                      className="min-w-0 break-words text-sm font-semibold text-foreground sm:truncate"
                       title={item.torrentName}
                     >
                       {item.displayName}
@@ -66,16 +69,16 @@ export function MediaDownloadsTab({ data }: { data: MediaDownloadsResponse }) {
                 <StatusBadge status={getMediaDownloadStateVariant(item.state)} label={item.state} />
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex min-w-0 items-center gap-2.5">
                 <ProgressBar
                   value={pct}
                   tone="info"
                   size="md"
                   ariaLabel={`${item.displayName} 下载进度`}
-                  className="flex-1"
+                  className="min-w-0 flex-1"
                   trackClassName="h-2"
                 />
-                <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums text-foreground">
+                <span className="shrink-0 text-right text-xs font-semibold tabular-nums text-foreground">
                   {pct}%
                 </span>
               </div>

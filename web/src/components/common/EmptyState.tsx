@@ -24,8 +24,8 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 text-center',
-        compact ? 'px-4 py-6' : 'px-6 py-12',
+        'flex min-w-0 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/50 text-center',
+        compact ? 'px-4 py-6' : 'px-4 py-10 sm:px-6 sm:py-12',
         className,
       )}
     >
@@ -39,11 +39,21 @@ export function EmptyState({
           <Icon className={compact ? 'size-4' : 'size-5'} aria-hidden="true" />
         </div>
       ) : null}
-      <h3 className={cn('font-medium text-foreground', compact ? 'text-sm' : 'text-base')}>
+      <h3
+        className={cn(
+          'max-w-full break-words font-medium text-foreground',
+          compact ? 'text-sm' : 'text-base',
+        )}
+      >
         {title}
       </h3>
       {description ? (
-        <p className={cn('mt-1 max-w-md text-muted-foreground', compact ? 'text-xs' : 'text-sm')}>
+        <p
+          className={cn(
+            'mt-1 max-w-md break-words text-muted-foreground',
+            compact ? 'text-xs' : 'text-sm',
+          )}
+        >
           {description}
         </p>
       ) : null}

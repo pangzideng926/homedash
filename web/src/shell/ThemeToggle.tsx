@@ -27,7 +27,7 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
       role="group"
       aria-label="主题切换"
       className={cn(
-        'inline-flex items-center rounded-lg border border-border bg-muted/60 p-0.5',
+        'inline-flex max-w-full shrink-0 items-center rounded-lg border border-border bg-muted/60 p-0.5',
         className,
       )}
     >
@@ -43,7 +43,7 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
             title={option.ariaLabel}
             onClick={() => setTheme(option.value)}
             className={cn(
-              'inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+              'inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium transition-colors sm:px-2',
               active
                 ? 'bg-background text-foreground shadow-xs'
                 : 'text-muted-foreground hover:text-foreground',

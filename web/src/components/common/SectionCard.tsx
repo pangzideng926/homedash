@@ -117,12 +117,14 @@ export function SectionCard({
       )}
     >
       <CardHeader className={cn('space-y-1.5 pb-3', headerClassName)}>
-        <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-start gap-2.5">
             {leadingNode ? <div className="mt-0.5 shrink-0">{leadingNode}</div> : null}
             <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className={cn('text-base leading-snug', titleClassName)}>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <CardTitle
+                  className={cn('min-w-0 break-words text-base leading-snug', titleClassName)}
+                >
                   {title}
                 </CardTitle>
                 {titleExtra}
@@ -134,7 +136,7 @@ export function SectionCard({
           </div>
 
           {actions || headerDetailsButton ? (
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
               {actions}
               {headerDetailsButton}
             </div>
@@ -143,7 +145,7 @@ export function SectionCard({
       </CardHeader>
 
       {hasContent ? (
-        <CardContent className={cn('flex flex-1 flex-col gap-3.5', contentClassName)}>
+        <CardContent className={cn('flex min-w-0 flex-1 flex-col gap-3.5', contentClassName)}>
           {children}
 
           {hasDetails && detailsTriggerPlacement === 'content' ? (
@@ -170,7 +172,9 @@ export function SectionCard({
       ) : null}
 
       {footer ? (
-        <CardFooter className="pt-0 text-xs text-muted-foreground">{footer}</CardFooter>
+        <CardFooter className="flex-wrap gap-2 pt-0 text-xs text-muted-foreground">
+          {footer}
+        </CardFooter>
       ) : null}
     </Card>
   );

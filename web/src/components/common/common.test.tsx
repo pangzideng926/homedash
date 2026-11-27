@@ -12,6 +12,7 @@ import {
   LoadingState,
   MaskedIp,
   maskIpAddress,
+  PageHeader,
   ProgressBar,
   SectionCard,
   StatusBadge,
@@ -156,5 +157,54 @@ describe('公共组件库 common', () => {
 
     await user.click(screen.getByRole('button', { name: '重试' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('窄屏防裁切布局 class 锁定（PageHeader / SectionCard / ExpiryCountdown / ProgressBar）', () => {
+    const { container } = render(
+      <div>
+        <PageHeader
+          title="总览"
+          description="集中查看家用设备、NAS、VPS 到期、影视下载概况与异常提示。"
+          actions={<button type="button">刷新</button>}
+        />
+        <SectionCard
+          title="影视下载概况"
+          titleExtra={<StatusBadge status="online" />}
+          actions={
+            <div>
+              <span>刷流</span>
+              <span>下载器</span>
+            </div>
+          }
+          footer={<span>RAID 2/2 正常</span>}
+        >
+          <ProgressBar ariaLabel="磁盘" label="磁盘" showPercent value={84} />
+          <ExpiryCountdown daysLeft={10} level="warning" expiresAt="2026-12-07" />
+        </SectionCard>
+      </div>,
+    );
+
+    const desc = screen.getByText('集中查看家用设备、NAS、VPS 到期、影视下载概况与异常提示。');
+    expect(desc.className).toContain('break-words');
+
+    const progress = screen.getByRole('progressbar', { name: '磁盘' });
+    expect(progress.parentElement?.className).toContain('min-w-0');
+    expect(progress.parentElement?.className).toContain('w-full');
+
+    const expiryBadge = screen.getByText('剩余 10 天').parentElement;
+    expect(expiryBadge?.parentElement?.className).toContain('flex-wrap');
+    expect(expiryBadge?.parentElement?.parentElement?.className).toContain('min-w-0');
+    expect(expiryBadge?.parentElement?.parentElement?.className).toContain('w-full');
+
+    const actionsWrap = screen.getByText('刷流').parentElement?.parentElement;
+    expect(actionsWrap?.className).toContain('flex-wrap');
+    expect(actionsWrap?.className).toContain('max-w-full');
+    expect(actionsWrap?.className).not.toContain('shrink-0');
+
+    const cardFooter = screen.getByText('RAID 2/2 正常').parentElement;
+    expect(cardFooter?.className).toContain('flex-wrap');
+
+    const cardHeader = container.querySelector('.p-4.sm\\:p-6');
+    expect(cardHeader).toBeInTheDocument();
   });
 });

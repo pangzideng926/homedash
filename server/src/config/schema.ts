@@ -133,6 +133,14 @@ const positiveIntSchema = (label: string) =>
     )
     .transform((val) => Number(val));
 
+export const MIN_SSH_STATUS_CACHE_SECONDS = 60;
+export const DEFAULT_SSH_STATUS_CACHE_SECONDS = 60;
+
+export function clampSshStatusCacheSeconds(seconds: number): number {
+  if (!Number.isFinite(seconds)) return MIN_SSH_STATUS_CACHE_SECONDS;
+  return Math.max(MIN_SSH_STATUS_CACHE_SECONDS, Math.floor(seconds));
+}
+
 const nonNegativeIntSchema = (label: string) =>
   z
     .string({ message: `${label}必须是大于或等于 0 的整数` })
@@ -146,6 +154,9 @@ const nonNegativeIntSchema = (label: string) =>
       { message: `${label}必须是大于或等于 0 的整数` },
     )
     .transform((val) => Number(val));
+
+const clampedSshCacheSecondsSchema = (label: string) =>
+  nonNegativeIntSchema(label).transform((val) => clampSshStatusCacheSeconds(val));
 
 const intInRangeSchema = (label: string, min: number, max: number) =>
   z
@@ -249,7 +260,7 @@ const nasFieldSchemas = {
   NAS_SSH_USER: nonEmptyStringSchema('NAS SSH 用户名'),
   NAS_SSH_KEY_PATH: nonEmptyStringSchema('NAS SSH 私钥路径'),
   NAS_MOCK: booleanStringSchema,
-  NAS_CACHE_SECONDS: nonNegativeIntSchema('NAS 状态缓存时间（秒）'),
+  NAS_CACHE_SECONDS: clampedSshCacheSecondsSchema('NAS 状态缓存时间（秒）'),
   DOCKER_ACTIONS_ENABLED: booleanStringSchema,
   DOCKER_PROTECTED_CONTAINERS: z.string().transform((val) =>
     val
@@ -315,10 +326,10 @@ const windowsSshEnvSchema = z.object({
 });
 
 const windowsTimeoutSchema = positiveIntSchema('Windows SSH 超时时间（毫秒）');
-const windowsCacheSecondsSchema = nonNegativeIntSchema('Windows 状态缓存时间（秒）');
+const windowsCacheSecondsSchema = clampedSshCacheSecondsSchema('Windows 状态缓存时间（秒）');
 const devicesFileSchema = nonEmptyStringSchema('设备清单文件路径');
 const deviceTimeoutSchema = positiveIntSchema('家用设备 SSH 超时时间（毫秒）');
-const deviceCacheSecondsSchema = nonNegativeIntSchema('家用设备状态缓存时间（秒）');
+const deviceCacheSecondsSchema = clampedSshCacheSecondsSchema('家用设备状态缓存时间（秒）');
 const vpsFileSchema = nonEmptyStringSchema('VPS 清单文件路径');
 
 function parseSingleKey<T>(
@@ -412,7 +423,7 @@ function parseDevicesSection(
     isEnvValueFilled(env.WIN_CACHE_SECONDS) &&
     deviceCacheSecondsSchema.safeParse(env.WIN_CACHE_SECONDS).success
       ? deviceCacheSecondsSchema.parse(env.WIN_CACHE_SECONDS)
-      : 30;
+      : DEFAULT_SSH_STATUS_CACHE_SECONDS;
 
   const timeoutRes = parseSingleKey(
     'devices',
@@ -482,7 +493,7 @@ function parseWindowsSection(
     'WIN_CACHE_SECONDS',
     windowsCacheSecondsSchema,
     env.WIN_CACHE_SECONDS,
-    30,
+    DEFAULT_SSH_STATUS_CACHE_SECONDS,
     issues,
   );
   const mockRes = parseSingleKey(
@@ -659,7 +670,7 @@ function parseNasSection(
     'NAS_CACHE_SECONDS',
     nasFieldSchemas.NAS_CACHE_SECONDS,
     env.NAS_CACHE_SECONDS,
-    30,
+    DEFAULT_SSH_STATUS_CACHE_SECONDS,
     issues,
   );
   const dockerActionsRes = parseSingleKey(

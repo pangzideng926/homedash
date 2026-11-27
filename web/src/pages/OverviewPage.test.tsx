@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import type {
   NasStatusResponse,
   VpsListResponse,
 } from '@/lib/api';
+import { writeStatusRefreshInterval } from '@/lib/status-refresh';
 import { OverviewPage } from '@/pages/OverviewPage';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -358,6 +359,7 @@ function buildHealthyResponses(): {
 
 describe('OverviewPage 首页总览', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -613,5 +615,58 @@ describe('OverviewPage 首页总览', () => {
     expect(fetchSpy).toHaveBeenCalledWith('/api/devices/status?refresh=1', expect.anything());
     expect(fetchSpy).toHaveBeenCalledWith('/api/nas/status?refresh=1', expect.anything());
     expect(fetchSpy).toHaveBeenCalledWith('/api/downloaders/summary?refresh=1', expect.anything());
+  });
+
+  it('总览仅对设备与 NAS 进行非强制定时轮询（不轮询 VPS/下载器/影视），展示「上次更新」与手动刷新按钮', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-11-27T08:00:20.000Z'));
+    writeStatusRefreshInterval(60);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const sample = buildHealthyResponses();
+    const calledUrls: string[] = [];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      calledUrls.push(url);
+      if (url.startsWith('/api/devices/status')) return jsonResponse(sample.devices);
+      if (url.startsWith('/api/nas/status')) return jsonResponse(sample.nas);
+      if (url.startsWith('/api/vps')) return jsonResponse(sample.vps);
+      if (url.startsWith('/api/downloaders/summary')) return jsonResponse(sample.downloaders);
+      if (url.startsWith('/api/moviepilot/summary')) return jsonResponse(sample.moviepilot);
+      return jsonResponse({}, 404);
+    });
+
+    render(
+      <MemoryRouter>
+        <OverviewPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('暂无异常')).toBeInTheDocument();
+    expect(screen.getAllByText(/上次更新/).length).toBeGreaterThanOrEqual(1);
+    const raidFooterText = screen.getByText('RAID 1/1 正常');
+    expect(raidFooterText.parentElement?.className).toContain('flex-wrap');
+    expect(raidFooterText.parentElement?.className).toContain('min-w-0');
+
+    calledUrls.length = 0;
+
+    // 推进 60 秒：仅定时轮询 devices 与 nas（不带 refresh=1），不轮询 vps / downloaders / moviepilot
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(calledUrls).toContain('/api/devices/status');
+    expect(calledUrls).toContain('/api/nas/status');
+    expect(calledUrls).not.toContain('/api/devices/status?refresh=1');
+    expect(calledUrls).not.toContain('/api/nas/status?refresh=1');
+    expect(calledUrls.some((u) => u.startsWith('/api/vps'))).toBe(false);
+    expect(calledUrls.some((u) => u.startsWith('/api/downloaders/summary'))).toBe(false);
+    expect(calledUrls.some((u) => u.startsWith('/api/moviepilot/summary'))).toBe(false);
+
+    // 点击「刷新设备与 NAS」：仅对 devices 与 nas 带 ?refresh=1
+    calledUrls.length = 0;
+    await user.click(screen.getByRole('button', { name: '刷新设备与 NAS' }));
+    expect(calledUrls).toContain('/api/devices/status?refresh=1');
+    expect(calledUrls).toContain('/api/nas/status?refresh=1');
   });
 });

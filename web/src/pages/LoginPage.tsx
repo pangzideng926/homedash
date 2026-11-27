@@ -52,7 +52,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="relative flex min-h-screen items-center justify-center overflow-x-clip bg-muted/40 px-4 pt-16 pb-6">
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>

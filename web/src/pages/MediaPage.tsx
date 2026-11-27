@@ -88,7 +88,7 @@ export function MediaPage() {
   const isErrorInitial = Boolean(error) && !currentData;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="影视"
         description="影视总览、最近入库海报墙、正在下载与订阅追剧（只读，不含刷流实例）。"
@@ -113,7 +113,7 @@ export function MediaPage() {
       <div
         role="tablist"
         aria-label="影视功能页签"
-        className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/50 p-1"
+        className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/50 p-1"
       >
         {MEDIA_TABS.map((tab) => {
           const selected = activeTab === tab.id;

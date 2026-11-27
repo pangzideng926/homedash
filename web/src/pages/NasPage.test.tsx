@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NasPage } from '@/pages/NasPage';
+import { writeStatusRefreshInterval } from '@/lib/status-refresh';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -341,5 +342,43 @@ describe('NasPage NAS 监控与 Docker 容器管理页', () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(statusRefreshCalls).toBe(1);
+  });
+
+  it('定时轮询不带 refresh=1，展示「上次更新」，手动点击刷新才带 ?refresh=1', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-11-27T08:00:20.000Z'));
+    writeStatusRefreshInterval(60);
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const nasUrls: string[] = [];
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      nasUrls.push(url);
+      return jsonResponse({
+        ...buildSampleNasResponse(),
+        checkedAt: new Date(Date.now()).toISOString(),
+      });
+    });
+
+    render(
+      <MemoryRouter>
+        <NasPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('demo-nas')).toBeInTheDocument();
+    expect(nasUrls).toEqual(['/api/nas/status']);
+    expect(screen.getByText(/上次更新/)).toBeInTheDocument();
+
+    // 到达 60s 定时轮询：非强制请求（无 refresh=1）
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(nasUrls).toEqual(['/api/nas/status', '/api/nas/status']);
+
+    // 手动点击刷新：带 ?refresh=1
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+    expect(nasUrls).toEqual(['/api/nas/status', '/api/nas/status', '/api/nas/status?refresh=1']);
   });
 });

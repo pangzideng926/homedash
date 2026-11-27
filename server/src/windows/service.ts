@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { REPO_ROOT, type AppConfig, type SafeLogger } from '../config/index.js';
+import {
+  clampSshStatusCacheSeconds,
+  REPO_ROOT,
+  type AppConfig,
+  type SafeLogger,
+} from '../config/index.js';
 import { WINDOWS_READONLY_STATUS_COMMAND } from './command.js';
 import {
   executeSshCommand,
@@ -384,7 +389,7 @@ export function createWindowsStatusService(
         data,
       };
 
-      const cacheTtlMs = winConfig.WIN_CACHE_SECONDS * 1000;
+      const cacheTtlMs = clampSshStatusCacheSeconds(winConfig.WIN_CACHE_SECONDS) * 1000;
       if (cacheTtlMs > 0) {
         cachedEntry = {
           expiresAtMs: finishedAt + cacheTtlMs,

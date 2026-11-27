@@ -50,11 +50,11 @@ export function DataCard({
     >
       <CardHeader
         className={cn(
-          'flex flex-row items-start justify-between space-y-0',
+          'flex flex-row flex-wrap items-start justify-between gap-2 space-y-0',
           compact ? 'px-4 pt-4 pb-2' : 'pb-3',
         )}
       >
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <CardTitle
             className={compact ? 'text-xs font-medium text-muted-foreground' : 'text-base'}
           >
@@ -77,10 +77,10 @@ export function DataCard({
       </CardHeader>
 
       <CardContent className={cn(compact ? 'px-4 pb-3 pt-0' : 'space-y-3')}>
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <div
             className={cn(
-              'text-2xl font-semibold tracking-tight tabular-nums text-foreground',
+              'min-w-0 break-words text-2xl font-semibold tracking-tight tabular-nums text-foreground',
               valueClassName,
             )}
           >
@@ -93,7 +93,7 @@ export function DataCard({
       {footer ? (
         <CardFooter
           className={cn(
-            'text-muted-foreground',
+            'min-w-0 break-words text-muted-foreground',
             compact ? 'px-4 pb-4 pt-0 text-[11px]' : 'text-xs',
           )}
         >

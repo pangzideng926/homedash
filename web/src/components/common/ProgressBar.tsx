@@ -55,16 +55,18 @@ export function ProgressBar({
   const hasHeader = Boolean(label) || displayValue !== null;
 
   return (
-    <div className={cn(hasHeader ? 'space-y-1.5' : undefined, className)}>
+    <div className={cn('min-w-0 w-full', hasHeader ? 'space-y-1.5' : undefined, className)}>
       {hasHeader ? (
-        <div className="flex items-center justify-between gap-2 text-xs">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-xs">
           {label ? (
-            <span className="min-w-0 truncate text-muted-foreground">{label}</span>
+            <span className="min-w-[3.5rem] max-w-full flex-1 truncate text-muted-foreground">
+              {label}
+            </span>
           ) : (
             <span />
           )}
           {displayValue !== null ? (
-            <span className="shrink-0 font-medium tabular-nums text-foreground">
+            <span className="max-w-full break-words font-medium tabular-nums text-foreground">
               {displayValue}
             </span>
           ) : null}

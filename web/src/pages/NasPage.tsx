@@ -31,7 +31,7 @@ import {
 import { formatBytes, formatDateTime, formatUptime } from '@/components/devices/device-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useApi } from '@/hooks/useApi';
+import { useStatusPolling } from '@/hooks/useStatusPolling';
 import {
   ApiError,
   executeNasDockerAction,
@@ -41,7 +41,9 @@ import {
   type DockerAction,
   type DockerAuditEntry,
   type NasDockerContainer,
+  type NasStatusResponse,
 } from '@/lib/api';
+import { formatLastUpdated } from '@/lib/status-refresh';
 
 const DOCKER_ACTION_TIMEOUT_MESSAGE = '操作已发出但等待超时，请稍后刷新查看容器状态';
 const DOCKER_TIMEOUT_AUTO_REFRESH_DELAY_MS = 3000;
@@ -82,8 +84,25 @@ function getAuditResultBadge(result: DockerAuditEntry['result']): {
 export function NasPage() {
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetcher = useCallback((signal: AbortSignal) => fetchNasStatus({ signal }), []);
-  const { data, loading, error, refetch } = useApi(fetcher);
+  const fetcher = useCallback(
+    ({ refresh, signal }: { refresh: boolean; signal: AbortSignal }) =>
+      fetchNasStatus({ refresh, signal }),
+    [],
+  );
+  const {
+    data,
+    loading,
+    refreshing: pollRefreshing,
+    error,
+    lastUpdatedAt,
+    nowMs,
+    refresh,
+    refetch,
+  } = useStatusPolling<NasStatusResponse>({
+    topic: 'nas',
+    fetcher,
+    getUpdatedAt: (res) => res.checkedAt,
+  });
 
   // Docker 操作状态
   const [actionLoadingKey, setActionLoadingKey] = useState<string | null>(null);
@@ -146,16 +165,13 @@ export function NasPage() {
     }
     setRefreshing(true);
     try {
-      await fetchNasStatus({ refresh: true });
-      await refetch();
-    } catch {
-      await refetch();
+      await refresh();
     } finally {
       if (isMountedRef.current) {
         setRefreshing(false);
       }
     }
-  }, [refetch]);
+  }, [refresh]);
 
   const handleRunDockerAction = async (container: string, action: DockerAction) => {
     if (autoRefreshTimerRef.current !== null) {
@@ -170,8 +186,7 @@ export function NasPage() {
     try {
       const res = await executeNasDockerAction(container, action);
       setActionFeedback({ ok: true, message: res.message });
-      await fetchNasStatus({ refresh: true });
-      await refetch();
+      await refresh();
       if (auditOpen) {
         await loadAuditEntries();
       }
@@ -237,26 +252,31 @@ export function NasPage() {
   };
 
   const actionsEnabled = Boolean(data?.data?.docker.actionsEnabled);
+  const isBusy = loading || refreshing || pollRefreshing;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="NAS"
         description="Linux NAS 只读硬件状态、传感器温度、RAID 阵列、存储卷与 Docker 容器管理。"
         actions={
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void handleForceRefresh()}
-            disabled={loading || refreshing}
-          >
-            <RotateCw
-              className={loading || refreshing ? 'size-4 animate-spin' : 'size-4'}
-              aria-hidden="true"
-            />
-            <span>刷新</span>
-          </Button>
+          <div className="flex max-w-full flex-wrap items-center gap-2">
+            {lastUpdatedAt ? (
+              <span className="text-xs text-muted-foreground" title={formatDateTime(lastUpdatedAt)}>
+                {formatLastUpdated(lastUpdatedAt, nowMs)}
+              </span>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handleForceRefresh()}
+              disabled={isBusy}
+            >
+              <RotateCw className={isBusy ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
+              <span>刷新</span>
+            </Button>
+          </div>
         }
       />
 
@@ -290,11 +310,13 @@ export function NasPage() {
         />
       ) : (
         <div className="space-y-6">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <StatusBadge status="online" />
             {data.mock ? <StatusBadge status="info" label="模拟数据" showDot={false} /> : null}
             {data.cached ? <StatusBadge status="unknown" label="缓存命中" showDot={false} /> : null}
-            <span>最近采集：{formatDateTime(data.checkedAt)}</span>
+            <span title={formatDateTime(data.checkedAt)}>
+              最近采集：{formatDateTime(data.checkedAt)}
+            </span>
           </div>
 
           {/* 系统信息与 CPU/内存 */}
@@ -390,9 +412,9 @@ export function NasPage() {
                 {data.data.temperatures.map((group) => (
                   <div
                     key={group.category}
-                    className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+                    className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs font-medium text-foreground">{group.label}</div>
                       <div className="text-[11px] text-muted-foreground">
                         {group.sensors.length} 个测点
@@ -409,9 +431,9 @@ export function NasPage() {
                   ? data.data.smart.disks.map((disk) => (
                       <div
                         key={disk.device}
-                        className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
+                        className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5"
                       >
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <div className="truncate font-mono text-xs font-medium text-foreground">
                             {disk.device}
                           </div>
@@ -447,10 +469,10 @@ export function NasPage() {
                   {data.data.raids.map((raid) => (
                     <div
                       key={raid.name}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 p-3"
+                      className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 p-3"
                     >
-                      <div className="min-w-0 space-y-0.5">
-                        <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-sm font-semibold text-foreground">
                             {raid.name}
                           </span>
@@ -463,7 +485,7 @@ export function NasPage() {
                             </code>
                           ) : null}
                         </div>
-                        <div className="truncate text-xs text-muted-foreground">
+                        <div className="break-words text-xs text-muted-foreground">
                           成员：{raid.members.join(', ')}
                         </div>
                       </div>
@@ -582,11 +604,11 @@ export function NasPage() {
                   return (
                     <div
                       key={c.id}
-                      className="flex flex-col justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4"
+                      className="flex min-w-0 flex-col justify-between gap-3 rounded-xl border border-border bg-muted/20 p-4"
                     >
-                      <div className="space-y-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 space-y-1">
+                      <div className="min-w-0 space-y-2.5">
+                        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1 space-y-1">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="truncate text-sm font-semibold text-foreground">
                                 {c.name}
@@ -603,13 +625,13 @@ export function NasPage() {
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 rounded-lg bg-muted/40 p-2.5 text-xs">
-                          <div>
+                          <div className="min-w-0">
                             <div className="text-[11px] text-muted-foreground">CPU</div>
                             <div className="font-mono font-medium text-foreground">
                               {c.cpuPercent || '-'}
                             </div>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="text-[11px] text-muted-foreground">内存</div>
                             <div className="truncate font-mono font-medium text-foreground">
                               {c.memUsage
@@ -617,11 +639,11 @@ export function NasPage() {
                                 : '-'}
                             </div>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="text-[11px] text-muted-foreground">运行时长</div>
                             <div className="truncate text-foreground">{c.runningFor || '-'}</div>
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="text-[11px] text-muted-foreground">端口</div>
                             <div className="truncate font-mono text-foreground">
                               {c.ports || '-'}
@@ -841,7 +863,7 @@ export function NasPage() {
                     : '只读查看最近容器输出日志'}
                 </CardDescription>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex max-w-full flex-wrap items-center gap-2">
                 <label htmlFor="docker-logs-tail" className="text-xs text-muted-foreground">
                   行数
                 </label>

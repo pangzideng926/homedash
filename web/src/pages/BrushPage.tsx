@@ -33,7 +33,7 @@ export function BrushPage() {
   const brushTotals = useMemo(() => computeFilteredTotals(brushInstances), [brushInstances]);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="刷流"
         description="仅展示带有「刷流」用途标签的下载器实例及活跃任务（不混入影视模块统计）。"

@@ -120,7 +120,7 @@ describe('SettingsPage 设置状态页', () => {
   });
 
   it('集成配置区支持 NAS/MoviePilot 保存测试与多实例下载器增删改及测试连接', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const putDownloaderBodies: Array<unknown> = [];
     const testDownloaderBodies: Array<unknown> = [];
 
@@ -294,5 +294,34 @@ describe('SettingsPage 设置状态页', () => {
     await user.click(screen.getByRole('button', { name: '删除 TR 保种' }));
     await user.click(screen.getByRole('button', { name: '确认删除' }));
     expect(putDownloaderBodies).toHaveLength(3);
+  }, 15_000);
+
+  it('前端偏好设置支持切换状态刷新间隔并持久化到 localStorage（默认 5 分钟）', async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/settings/status')) return jsonResponse({ modules: {} });
+      if (url.endsWith('/api/integrations')) return jsonResponse({ modules: {} });
+      if (url.endsWith('/api/downloaders')) return jsonResponse({ error: 'skip' }, 404);
+      return jsonResponse({}, 404);
+    });
+
+    const { unmount } = render(<SettingsPage />);
+
+    const select = (await screen.findByLabelText('状态刷新间隔')) as HTMLSelectElement;
+    expect(select.value).toBe('300');
+
+    await user.selectOptions(select, '60');
+    expect(localStorage.getItem('homedash.statusRefreshIntervalSeconds')).toBe('60');
+    expect(select.value).toBe('60');
+
+    await user.selectOptions(select, '0');
+    expect(localStorage.getItem('homedash.statusRefreshIntervalSeconds')).toBe('0');
+    expect(select.value).toBe('0');
+
+    unmount();
+    render(<SettingsPage />);
+    const remountedSelect = (await screen.findByLabelText('状态刷新间隔')) as HTMLSelectElement;
+    expect(remountedSelect.value).toBe('0');
   });
 });

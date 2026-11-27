@@ -28,7 +28,7 @@ import {
   type StatusVariant,
 } from '@/components/common';
 import { DeviceOsIcon } from '@/components/devices/DeviceOsIcon';
-import { formatSpeed } from '@/components/devices/device-utils';
+import { formatDateTime, formatSpeed } from '@/components/devices/device-utils';
 import {
   DownloaderTagBadge,
   DownloaderTypeBadge,
@@ -36,6 +36,7 @@ import {
 import { formatVpsCardTitle } from '@/components/vps/vps-utils';
 import { Button } from '@/components/ui/button';
 import { useApi } from '@/hooks/useApi';
+import { useStatusPolling } from '@/hooks/useStatusPolling';
 import {
   fetchDevicesStatus,
   fetchDownloadersSummary,
@@ -48,6 +49,7 @@ import {
   type NasStatusResponse,
   type VpsListResponse,
 } from '@/lib/api';
+import { formatLastUpdated } from '@/lib/status-refresh';
 import {
   collectOverviewAnomalies,
   computeMediaDownloadOverview,
@@ -90,7 +92,24 @@ interface DeviceGroupCardProps {
   loading: boolean;
   error: Error | null;
   data: DevicesStatusResponse | null;
+  nowMs: number;
   onRetry: () => void;
+}
+
+function getLatestDeviceCheckedAt(
+  devices: readonly DeviceStatusItem[],
+  fallbackCheckedAt?: string | null,
+): string | null {
+  let latestMs = -1;
+  let latestIso: string | null = null;
+  for (const dev of devices) {
+    const ts = Date.parse(dev.checkedAt);
+    if (Number.isFinite(ts) && ts > latestMs) {
+      latestMs = ts;
+      latestIso = dev.checkedAt;
+    }
+  }
+  return latestIso ?? fallbackCheckedAt ?? null;
 }
 
 function DeviceGroupCard({
@@ -100,6 +119,7 @@ function DeviceGroupCard({
   loading,
   error,
   data,
+  nowMs,
   onRetry,
 }: DeviceGroupCardProps) {
   const icon = (
@@ -206,6 +226,7 @@ function DeviceGroupCard({
   }
 
   const badge = getGroupStatusBadge(devices);
+  const groupCheckedAt = getLatestDeviceCheckedAt(devices, data.checkedAt);
 
   return (
     <Link
@@ -223,10 +244,19 @@ function DeviceGroupCard({
             : `共 ${devices.length} 台 · ${devices.filter((d) => d.online).length} 台在线`
         }
         actions={
-          <div className="flex items-center gap-1.5">
+          <div className="flex max-w-full flex-wrap items-center gap-1.5">
             <StatusBadge status={badge.status} label={badge.label} />
-            <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           </div>
+        }
+        footer={
+          groupCheckedAt ? (
+            <div className="flex min-w-0 w-full flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
+              <span title={formatDateTime(groupCheckedAt)}>
+                {formatLastUpdated(groupCheckedAt, nowMs)}
+              </span>
+            </div>
+          ) : undefined
         }
       >
         {devices.length === 1 && devices[0] ? (
@@ -279,8 +309,10 @@ function DeviceGroupCard({
                   key={dev.id}
                   className="space-y-1.5 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate font-medium text-foreground">{dev.name}</span>
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                      {dev.name}
+                    </span>
                     <StatusBadge size="sm" status={dev.online ? 'online' : 'offline'} />
                   </div>
                   {dev.online && dev.data ? (
@@ -312,11 +344,13 @@ function NasOverviewCard({
   data,
   loading,
   error,
+  nowMs,
   onRetry,
 }: {
   data: NasStatusResponse | null;
   loading: boolean;
   error: Error | null;
+  nowMs: number;
   onRetry: () => void;
 }) {
   if (loading && !data) {
@@ -410,13 +444,13 @@ function NasOverviewCard({
         title="NAS"
         subtitle={nas.hostname}
         actions={
-          <div className="flex items-center gap-1.5">
+          <div className="flex max-w-full flex-wrap items-center gap-1.5">
             <StatusBadge status="online" />
-            <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           </div>
         }
         footer={
-          <div className="flex w-full flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
+          <div className="flex min-w-0 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border/60 pt-2">
             <span>
               {nas.maxTemperatureC !== null
                 ? `最高温度 ${nas.maxTemperatureC}℃`
@@ -427,6 +461,9 @@ function NasOverviewCard({
                 RAID {nas.raids.filter((r) => r.healthy).length}/{nas.raids.length} 正常
               </span>
             ) : null}
+            <span title={formatDateTime(data.checkedAt)}>
+              {formatLastUpdated(data.checkedAt, nowMs)}
+            </span>
           </div>
         }
       >
@@ -557,13 +594,16 @@ function VpsNearestSection({
 export function OverviewPage() {
   const forceRefreshRef = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingInfra, setRefreshingInfra] = useState(false);
 
   const devicesFetcher = useCallback(
-    (signal: AbortSignal) => fetchDevicesStatus({ refresh: forceRefreshRef.current, signal }),
+    ({ refresh, signal }: { refresh: boolean; signal: AbortSignal }) =>
+      fetchDevicesStatus({ refresh, signal }),
     [],
   );
   const nasFetcher = useCallback(
-    (signal: AbortSignal) => fetchNasStatus({ refresh: forceRefreshRef.current, signal }),
+    ({ refresh, signal }: { refresh: boolean; signal: AbortSignal }) =>
+      fetchNasStatus({ refresh, signal }),
     [],
   );
   const vpsFetcher = useCallback((signal: AbortSignal) => fetchVpsList(signal), []);
@@ -576,8 +616,16 @@ export function OverviewPage() {
     [],
   );
 
-  const devicesState = useApi(devicesFetcher);
-  const nasState = useApi(nasFetcher);
+  const devicesState = useStatusPolling<DevicesStatusResponse>({
+    topic: 'devices',
+    fetcher: devicesFetcher,
+    getUpdatedAt: (res) => res.checkedAt,
+  });
+  const nasState = useStatusPolling<NasStatusResponse>({
+    topic: 'nas',
+    fetcher: nasFetcher,
+    getUpdatedAt: (res) => res.checkedAt,
+  });
   const vpsState = useApi(vpsFetcher);
   const downloadersState = useApi(downloadersFetcher);
   const mpState = useApi(mpFetcher);
@@ -587,8 +635,8 @@ export function OverviewPage() {
     forceRefreshRef.current = true;
     try {
       await Promise.all([
-        devicesState.refetch(),
-        nasState.refetch(),
+        devicesState.refresh(),
+        nasState.refresh(),
         vpsState.refetch(),
         downloadersState.refetch(),
         mpState.refetch(),
@@ -598,6 +646,33 @@ export function OverviewPage() {
       setRefreshing(false);
     }
   };
+
+  const handleRefreshDevicesAndNas = async () => {
+    setRefreshingInfra(true);
+    try {
+      await Promise.all([devicesState.refresh(), nasState.refresh()]);
+    } finally {
+      setRefreshingInfra(false);
+    }
+  };
+
+  const latestInfraUpdatedAt = (() => {
+    const candidates = [devicesState.lastUpdatedAt, nasState.lastUpdatedAt].filter(
+      (item): item is string => Boolean(item),
+    );
+    if (candidates.length === 0) return null;
+    let latest = candidates[0]!;
+    let latestTs = Date.parse(latest);
+    for (const item of candidates.slice(1)) {
+      const ts = Date.parse(item);
+      if (Number.isFinite(ts) && (!Number.isFinite(latestTs) || ts > latestTs)) {
+        latest = item;
+        latestTs = ts;
+      }
+    }
+    return latest;
+  })();
+  const infraNowMs = Math.max(devicesState.nowMs, nasState.nowMs);
 
   const anyInitialLoading =
     (devicesState.loading && !devicesState.data) ||
@@ -646,7 +721,7 @@ export function OverviewPage() {
     !mediaOverview.hasMoviepilot;
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <PageHeader
         title="总览"
         description="集中查看家用设备、NAS、VPS 到期、影视下载概况与异常提示。"
@@ -708,20 +783,22 @@ export function OverviewPage() {
               <Link
                 key={item.id}
                 to={item.to}
-                className="flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <div className="min-w-0 space-y-0.5">
-                  <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <StatusBadge
                       size="sm"
                       status={item.severity === 'error' ? 'danger' : 'warning'}
                       label={item.categoryLabel}
                     />
-                    <span className="truncate text-sm font-medium text-foreground">
+                    <span className="min-w-0 break-words text-sm font-medium text-foreground">
                       {item.title}
                     </span>
                   </div>
-                  <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
+                  <p className="break-words text-xs text-muted-foreground sm:truncate">
+                    {item.detail}
+                  </p>
                 </div>
                 <ChevronRight
                   className="size-4 shrink-0 text-muted-foreground"
@@ -734,46 +811,86 @@ export function OverviewPage() {
       </SectionCard>
 
       {/* 设备区：Windows / Mac / NAS */}
-      <CardGrid columns={3}>
-        <DeviceGroupCard
-          title="Windows"
-          os="windows"
-          devices={groupedDevices.windows}
-          loading={devicesState.loading}
-          error={devicesState.error}
-          data={devicesState.data}
-          onRetry={() => void devicesState.refetch()}
-        />
+      <div className="min-w-0 space-y-3">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">设备与 NAS 状态</span>
+            {latestInfraUpdatedAt ? (
+              <span title={formatDateTime(latestInfraUpdatedAt)}>
+                {formatLastUpdated(latestInfraUpdatedAt, infraNowMs)}
+              </span>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void handleRefreshDevicesAndNas()}
+            disabled={
+              refreshing || refreshingInfra || devicesState.refreshing || nasState.refreshing
+            }
+          >
+            <RotateCw
+              className={
+                refreshingInfra || devicesState.refreshing || nasState.refreshing
+                  ? 'size-3.5 animate-spin'
+                  : 'size-3.5'
+              }
+              aria-hidden="true"
+            />
+            <span>
+              {refreshingInfra || devicesState.refreshing || nasState.refreshing
+                ? '刷新中...'
+                : '刷新设备与 NAS'}
+            </span>
+          </Button>
+        </div>
 
-        <DeviceGroupCard
-          title="Mac"
-          os="macos"
-          devices={groupedDevices.macos}
-          loading={devicesState.loading}
-          error={devicesState.error}
-          data={devicesState.data}
-          onRetry={() => void devicesState.refetch()}
-        />
-
-        <NasOverviewCard
-          data={nasState.data}
-          loading={nasState.loading}
-          error={nasState.error}
-          onRetry={() => void nasState.refetch()}
-        />
-
-        {groupedDevices.other.length > 0 ? (
+        <CardGrid columns={3}>
           <DeviceGroupCard
-            title="其他设备"
-            os="linux"
-            devices={groupedDevices.other}
+            title="Windows"
+            os="windows"
+            devices={groupedDevices.windows}
             loading={devicesState.loading}
             error={devicesState.error}
             data={devicesState.data}
+            nowMs={devicesState.nowMs}
             onRetry={() => void devicesState.refetch()}
           />
-        ) : null}
-      </CardGrid>
+
+          <DeviceGroupCard
+            title="Mac"
+            os="macos"
+            devices={groupedDevices.macos}
+            loading={devicesState.loading}
+            error={devicesState.error}
+            data={devicesState.data}
+            nowMs={devicesState.nowMs}
+            onRetry={() => void devicesState.refetch()}
+          />
+
+          <NasOverviewCard
+            data={nasState.data}
+            loading={nasState.loading}
+            error={nasState.error}
+            nowMs={nasState.nowMs}
+            onRetry={() => void nasState.refetch()}
+          />
+
+          {groupedDevices.other.length > 0 ? (
+            <DeviceGroupCard
+              title="其他设备"
+              os="linux"
+              devices={groupedDevices.other}
+              loading={devicesState.loading}
+              error={devicesState.error}
+              data={devicesState.data}
+              nowMs={devicesState.nowMs}
+              onRetry={() => void devicesState.refetch()}
+            />
+          ) : null}
+        </CardGrid>
+      </div>
 
       {/* 底部双栏：VPS 最近到期 + 影视下载概况 */}
       <CardGrid columns={2}>
@@ -855,10 +972,10 @@ export function OverviewPage() {
 
               {mediaOverview.hasDownloaders || mediaOverview.hasMoviepilot ? (
                 <>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2.5 sm:gap-3 [&>*]:min-w-0">
                     <Link
                       to="/media"
-                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="block min-w-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <DataCard
                         compact
@@ -879,7 +996,7 @@ export function OverviewPage() {
 
                     <Link
                       to="/seeding"
-                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="block min-w-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <DataCard
                         compact
@@ -900,7 +1017,7 @@ export function OverviewPage() {
 
                     <Link
                       to="/media"
-                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="block min-w-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <DataCard
                         compact
@@ -922,7 +1039,7 @@ export function OverviewPage() {
 
                     <Link
                       to="/media?tab=subscriptions"
-                      className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="block min-w-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       <DataCard
                         compact
@@ -952,9 +1069,9 @@ export function OverviewPage() {
                           <Link
                             key={inst.id}
                             to={`/seeding/${encodeURIComponent(inst.id)}`}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs transition-colors hover:border-primary/40"
+                            className="flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs transition-colors hover:border-primary/40"
                           >
-                            <div className="flex min-w-0 items-center gap-1.5">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                               <DownloaderTypeBadge type={inst.type} />
                               <span className="truncate font-medium text-foreground">
                                 {inst.name}
@@ -963,7 +1080,7 @@ export function OverviewPage() {
                                 <DownloaderTagBadge key={tag} tag={tag} />
                               ))}
                             </div>
-                            <div className="flex shrink-0 items-center gap-2 text-muted-foreground tabular-nums">
+                            <div className="flex max-w-full flex-wrap items-center gap-2 text-muted-foreground tabular-nums">
                               {inst.online ? (
                                 <span>
                                   ↓ {formatSpeed(inst.dlSpeed)} · ↑ {formatSpeed(inst.upSpeed)}

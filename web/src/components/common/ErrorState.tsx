@@ -26,8 +26,8 @@ export function ErrorState({
     <div
       role="alert"
       className={cn(
-        'flex flex-col items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 text-center',
-        compact ? 'px-4 py-5' : 'px-6 py-10',
+        'flex min-w-0 flex-col items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 text-center',
+        compact ? 'px-4 py-5' : 'px-4 py-8 sm:px-6 sm:py-10',
         className,
       )}
     >
@@ -39,10 +39,20 @@ export function ErrorState({
       >
         <AlertCircle className={compact ? 'size-4' : 'size-5'} aria-hidden="true" />
       </div>
-      <h3 className={cn('font-medium text-foreground', compact ? 'text-sm' : 'text-base')}>
+      <h3
+        className={cn(
+          'max-w-full break-words font-medium text-foreground',
+          compact ? 'text-sm' : 'text-base',
+        )}
+      >
         {title}
       </h3>
-      <p className={cn('mt-1 max-w-md text-muted-foreground', compact ? 'text-xs' : 'text-sm')}>
+      <p
+        className={cn(
+          'mt-1 max-w-md break-words text-muted-foreground',
+          compact ? 'text-xs' : 'text-sm',
+        )}
+      >
         {message}
       </p>
       {onRetry || action ? (

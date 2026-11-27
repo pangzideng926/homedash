@@ -35,15 +35,15 @@ export function ExpiryCountdown({
   return (
     <div
       className={cn(
-        'rounded-lg border',
+        'min-w-0 w-full rounded-lg border',
         size === 'sm' ? 'px-3 py-2' : 'px-3.5 py-3',
         panelStyles.containerClass,
         className,
       )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex items-baseline">
+          <div className="flex flex-wrap items-baseline">
             {hasError || daysLeft === null ? (
               <span
                 className={cn(numberSizeClass, 'font-bold tracking-tight', panelStyles.accentClass)}
@@ -92,7 +92,7 @@ export function ExpiryCountdown({
             )}
           </div>
           {expiresAt !== undefined ? (
-            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+            <p className="mt-0.5 break-words font-mono text-xs text-muted-foreground">
               到期日：{expiresAt || '—'}
             </p>
           ) : null}
@@ -101,7 +101,7 @@ export function ExpiryCountdown({
         {showBadge ? <StatusBadge status={badgeVariant} label={badgeLabel} /> : null}
       </div>
 
-      {error ? <p className="mt-1.5 text-xs text-destructive">{error}</p> : null}
+      {error ? <p className="mt-1.5 break-words text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }

@@ -149,8 +149,8 @@ describe('Windows 状态采集服务（可注入执行器 mock）', () => {
     expect(first.data?.hostname).toBe('HOME-PC');
     expect(executor).toHaveBeenCalledTimes(1);
 
-    // 10 秒后仍在 30 秒缓存期内
-    currentTime += 10_000;
+    // 59 秒后仍在 >=60 秒下限缓存期内
+    currentTime += 59_000;
     const cached = await service.getStatus();
     expect(cached.online).toBe(true);
     expect(cached.cached).toBe(true);
@@ -162,11 +162,39 @@ describe('Windows 状态采集服务（可注入执行器 mock）', () => {
     expect(refreshed.cached).toBe(false);
     expect(executor).toHaveBeenCalledTimes(2);
 
-    // 超过 30 秒后缓存过期
-    currentTime += 31_000;
+    // 超过 60 秒后缓存过期
+    currentTime += 61_000;
     const expired = await service.getStatus();
     expect(expired.cached).toBe(false);
     expect(executor).toHaveBeenCalledTimes(3);
+  });
+
+  it('WIN_CACHE_SECONDS=0 时仍下限钳制为至少缓存 60 秒', async () => {
+    let currentTime = Date.parse('2026-11-27T08:00:00.000Z');
+    const executor = vi.fn<WindowsCommandExecutor>().mockResolvedValue({
+      code: 0,
+      stdout: SAMPLE_POWERSHELL_JSON,
+      stderr: '',
+    });
+    const service = createWindowsStatusService(makeWindowsConfig({ WIN_CACHE_SECONDS: '0' }), {
+      executor,
+      readPrivateKey: async () => TEST_KEY_CONTENT,
+      now: () => currentTime,
+    });
+
+    const first = await service.getStatus();
+    expect(first.cached).toBe(false);
+    expect(executor).toHaveBeenCalledTimes(1);
+
+    currentTime += 59_000;
+    const cached = await service.getStatus();
+    expect(cached.cached).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1);
+
+    currentTime += 2_000;
+    const expired = await service.getStatus();
+    expect(expired.cached).toBe(false);
+    expect(executor).toHaveBeenCalledTimes(2);
   });
 
   it('并发请求复用同一次进行中的采集', async () => {

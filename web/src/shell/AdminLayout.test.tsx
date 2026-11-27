@@ -162,4 +162,23 @@ describe('AdminLayout 通用后台骨架', () => {
     expect(matchMediaSpy).toHaveBeenCalled();
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
+
+  it('顶栏与主布局具备移动端防右侧裁切 class（overflow-x-clip / flex-wrap / min-w-0 / 紧凑退出按钮）', () => {
+    const { container } = renderLayout('/');
+
+    const root = container.firstElementChild;
+    expect(root?.className).toContain('overflow-x-clip');
+
+    const main = screen.getByRole('main');
+    expect(main.className).toContain('min-w-0');
+
+    const header = container.querySelector('header');
+    expect(header?.className).toContain('flex-wrap');
+
+    const themeGroup = screen.getByRole('group', { name: '主题切换' });
+    expect(themeGroup.className).toContain('max-w-full');
+
+    const logoutBtn = screen.getByRole('button', { name: '退出登录' });
+    expect(logoutBtn.className).toContain('px-2');
+  });
 });

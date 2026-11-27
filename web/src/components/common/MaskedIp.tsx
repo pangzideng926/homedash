@@ -67,7 +67,7 @@ export function MaskedIp({
   return (
     <div
       className={cn(
-        'flex min-w-0 items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 py-1.5 text-xs',
+        'flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 py-1.5 text-xs',
         className,
       )}
     >
