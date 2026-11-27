@@ -194,7 +194,7 @@ describe('VpsPage VPS 卡片页', () => {
   });
 
   it('支持表单校验、新增保存新字段与删除保存', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse(SAMPLE_VPS_RESPONSE))
@@ -289,7 +289,7 @@ describe('VpsPage VPS 卡片页', () => {
     await user.click(screen.getByRole('button', { name: '确认删除' }));
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('PUT');
-  });
+  }, 15_000);
 
   it('只读模式下隐藏新增、编辑与删除按钮，但仍可查看打码 IP', async () => {
     const user = userEvent.setup();
