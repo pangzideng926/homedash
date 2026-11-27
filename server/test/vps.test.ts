@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
 import { hashPassword } from '../src/auth/password.js';
-import { parseConfig } from '../src/config/index.js';
+import { parseConfig, REPO_ROOT } from '../src/config/index.js';
 import { createDatabase, type DatabaseConnection } from '../src/db/index.js';
 import {
   calculateDaysLeft,
@@ -110,6 +110,85 @@ describe('VPS 清单读取、保存与鉴权接口', () => {
     expect(badJson.error).toContain('JSON 解析失败');
   });
 
+  it('向后兼容旧版不含 region/ip/monthlyTrafficGB/role 字段的 JSON', () => {
+    const filePath = path.join(tmpDir, 'legacy.json');
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        servers: [
+          {
+            id: 'legacy-1',
+            name: '旧版节点',
+            provider: 'Legacy Cloud',
+            expiresAt: '2026-12-15',
+            price: 19.99,
+            currency: 'CNY',
+            renewUrl: 'https://billing.example.com/legacy',
+            note: '无扩展字段',
+          },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const nowMs = Date.parse('2026-11-27T04:00:00.000Z');
+    const res = readVpsList(makeConfig({ VPS_LIST_FILE: filePath }), nowMs);
+    expect(res.error).toBeUndefined();
+    expect(res.summary.invalid).toBe(0);
+    expect(res.servers).toHaveLength(1);
+    expect(res.servers[0]).toMatchObject({
+      id: 'legacy-1',
+      name: '旧版节点',
+      region: null,
+      ip: null,
+      monthlyTrafficGB: null,
+      role: null,
+      provider: 'Legacy Cloud',
+      expiresAt: '2026-12-15',
+      price: 19.99,
+      currency: 'CNY',
+      renewUrl: 'https://billing.example.com/legacy',
+      note: '无扩展字段',
+    });
+  });
+
+  it('按到期日升序排序，并将日期无效条目置于列表末尾', async () => {
+    const filePath = path.join(tmpDir, 'vps-sorted.json');
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        servers: [
+          { id: 'far', name: '远期节点', expiresAt: '2027-03-01' },
+          { id: 'bad-1', name: '错误节点一', expiresAt: '2026-02-30' },
+          { id: 'near', name: '近期节点', expiresAt: '2026-11-29' },
+          { id: 'expired', name: '已过期节点', expiresAt: '2026-11-20' },
+          { id: 'bad-2', name: '错误节点二', expiresAt: 'invalid-date' },
+          { id: 'mid', name: '中期节点', expiresAt: '2026-12-15' },
+        ],
+      }),
+      'utf-8',
+    );
+
+    const nowMs = Date.parse('2026-11-27T04:00:00.000Z');
+    const app = createApp(makeConfig({ VPS_LIST_FILE: filePath }), database.db, {
+      now: () => nowMs,
+    });
+    const cookie = await loginAndGetCookie(app);
+
+    const res = await app.request('/api/vps', { headers: { Cookie: cookie } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as VpsListResponse;
+
+    expect(body.servers.map((s) => s.id)).toEqual([
+      'expired',
+      'near',
+      'mid',
+      'far',
+      'bad-1',
+      'bad-2',
+    ]);
+  });
+
   it('单条日期格式错误时仅标记该条目，不影响其他正常条目计算与汇总', async () => {
     const filePath = path.join(tmpDir, 'vps.json');
     fs.writeFileSync(
@@ -146,15 +225,103 @@ describe('VPS 清单读取、保存与鉴权接口', () => {
       invalid: 1,
     });
 
+    expect(body.servers[0]?.id).toBe('v1');
     expect(body.servers[0]?.level).toBe('expired');
     expect(body.servers[0]?.daysLeft).toBe(-2);
-    expect(body.servers[1]?.level).toBeNull();
-    expect(body.servers[1]?.daysLeft).toBeNull();
-    expect(body.servers[1]?.error).toContain('YYYY-MM-DD');
-    expect(body.servers[2]?.level).toBe('danger');
-    expect(body.servers[2]?.daysLeft).toBe(5);
-    expect(body.servers[3]?.level).toBe('warning');
-    expect(body.servers[4]?.level).toBe('ok');
+    expect(body.servers[1]?.id).toBe('v3');
+    expect(body.servers[1]?.level).toBe('danger');
+    expect(body.servers[1]?.daysLeft).toBe(5);
+    expect(body.servers[2]?.id).toBe('v4');
+    expect(body.servers[2]?.level).toBe('warning');
+    expect(body.servers[3]?.id).toBe('v5');
+    expect(body.servers[3]?.level).toBe('ok');
+    expect(body.servers[4]?.id).toBe('v2');
+    expect(body.servers[4]?.level).toBeNull();
+    expect(body.servers[4]?.daysLeft).toBeNull();
+    expect(body.servers[4]?.error).toContain('YYYY-MM-DD');
+  });
+
+  it('支持新字段 region/ip/monthlyTrafficGB/role 读写往返及校验', async () => {
+    const filePath = path.join(tmpDir, 'vps-extended.json');
+    fs.writeFileSync(filePath, JSON.stringify({ servers: [] }), 'utf-8');
+
+    const nowMs = Date.parse('2026-11-27T04:00:00.000Z');
+    const app = createApp(makeConfig({ VPS_LIST_FILE: filePath }), database.db, {
+      now: () => nowMs,
+    });
+    const cookie = await loginAndGetCookie(app);
+
+    // 校验非法 IP 与负数月流量
+    const badIpRes = await app.request('/api/vps', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        servers: [{ name: '非法IP', expiresAt: '2026-12-10', ip: '999.999.999.999' }],
+      }),
+    });
+    expect(badIpRes.status).toBe(400);
+
+    const badTrafficRes = await app.request('/api/vps', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        servers: [{ name: '负流量', expiresAt: '2026-12-10', monthlyTrafficGB: -10 }],
+      }),
+    });
+    expect(badTrafficRes.status).toBe(400);
+
+    // 保存 IPv4、IPv6 与空字符串预处理
+    const putRes = await app.request('/api/vps', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        servers: [
+          {
+            id: 'ext-2',
+            name: '东京备机',
+            region: '日本',
+            ip: '2001:db8::1',
+            monthlyTrafficGB: 0,
+            role: '   ',
+            expiresAt: '2027-01-15',
+          },
+          {
+            id: 'ext-1',
+            name: '香港主节点',
+            region: '香港',
+            ip: '192.0.2.10',
+            monthlyTrafficGB: 1000,
+            role: '主面板/主线路',
+            provider: 'Example Cloud',
+            expiresAt: '2026-12-05',
+            price: 19.99,
+            currency: 'CNY',
+            renewUrl: 'https://billing.example.com/ext-1',
+            note: '仅测试',
+          },
+        ],
+      }),
+    });
+    expect(putRes.status).toBe(200);
+    const saved = (await putRes.json()) as VpsListResponse;
+    expect(saved.servers.map((s) => s.id)).toEqual(['ext-1', 'ext-2']);
+    expect(saved.servers[0]).toMatchObject({
+      region: '香港',
+      ip: '192.0.2.10',
+      monthlyTrafficGB: 1000,
+      role: '主面板/主线路',
+    });
+    expect(saved.servers[1]).toMatchObject({
+      region: '日本',
+      ip: '2001:db8::1',
+      monthlyTrafficGB: 0,
+      role: null,
+    });
+
+    const getRes = await app.request('/api/vps', { headers: { Cookie: cookie } });
+    expect(getRes.status).toBe(200);
+    const loaded = (await getRes.json()) as VpsListResponse;
+    expect(loaded.servers).toEqual(saved.servers);
   });
 
   it('PUT /api/vps 校验并原子保存清单且保留 .bak 备份', async () => {
@@ -240,5 +407,16 @@ describe('VPS 清单读取、保存与鉴权接口', () => {
     expect(res403.status).toBe(403);
     const errBody = (await res403.json()) as { error: string };
     expect(errBody.error).toContain('只读模式');
+  });
+
+  it('仓库示例文件 vps.example.json 能被正常解析且全部条目有效', () => {
+    const examplePath = path.join(REPO_ROOT, 'vps.example.json');
+    const nowMs = Date.parse('2026-11-27T04:00:00.000Z');
+    const result = readVpsList(makeConfig({ VPS_LIST_FILE: examplePath }), nowMs);
+
+    expect(result.error).toBeUndefined();
+    expect(result.summary.total).toBeGreaterThanOrEqual(3);
+    expect(result.summary.invalid).toBe(0);
+    expect(result.servers.every((s) => s.region && s.ip && s.monthlyTrafficGB !== null)).toBe(true);
   });
 });

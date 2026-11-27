@@ -1,5 +1,16 @@
 import { useState, type FormEvent } from 'react';
-import { ExternalLink, Pencil, Plus, RotateCw, Server, Trash2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Pencil,
+  Plus,
+  RotateCw,
+  Server,
+  Trash2,
+} from 'lucide-react';
 import {
   DataCard,
   EmptyState,
@@ -10,9 +21,17 @@ import {
   type StatusVariant,
 } from '@/components/common';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  formatMonthlyTraffic,
+  formatVpsCardTitle,
+  formatVpsPrice,
+  isLongNote,
+  isValidIpInput,
+  maskIpAddress,
+} from '@/components/vps/vps-utils';
 import { useApi } from '@/hooks/useApi';
 import {
   fetchVpsList,
@@ -21,9 +40,14 @@ import {
   type VpsServerInput,
   type VpsServerView,
 } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 interface VpsFormValues {
   name: string;
+  region: string;
+  ip: string;
+  monthlyTrafficGB: string;
+  role: string;
   provider: string;
   expiresAt: string;
   price: string;
@@ -34,6 +58,10 @@ interface VpsFormValues {
 
 const EMPTY_FORM: VpsFormValues = {
   name: '',
+  region: '',
+  ip: '',
+  monthlyTrafficGB: '',
+  role: '',
   provider: '',
   expiresAt: '',
   price: '',
@@ -76,15 +104,42 @@ function getLevelBadgeProps(server: VpsServerView): { status: StatusVariant; lab
   return { status: 'success', label: `剩余 ${server.daysLeft} 天` };
 }
 
-function formatPrice(price: number | null, currency: string | null): string {
-  if (price === null) return '—';
-  return currency ? `${price} ${currency}` : String(price);
+function getCountdownPanelStyles(server: VpsServerView): {
+  containerClass: string;
+  accentClass: string;
+} {
+  if (
+    server.error ||
+    server.daysLeft === null ||
+    server.level === null ||
+    server.level === 'expired' ||
+    server.level === 'danger'
+  ) {
+    return {
+      containerClass: 'border-red-500/25 bg-red-500/5',
+      accentClass: 'text-red-600 dark:text-red-400',
+    };
+  }
+  if (server.level === 'warning') {
+    return {
+      containerClass: 'border-amber-500/25 bg-amber-500/5',
+      accentClass: 'text-amber-600 dark:text-amber-400',
+    };
+  }
+  return {
+    containerClass: 'border-emerald-500/25 bg-emerald-500/5',
+    accentClass: 'text-emerald-600 dark:text-emerald-400',
+  };
 }
 
 function toServerInput(server: VpsServerView): VpsServerInput {
   return {
     id: server.id,
     name: server.name,
+    region: server.region ?? null,
+    ip: server.ip ?? null,
+    monthlyTrafficGB: server.monthlyTrafficGB ?? null,
+    role: server.role ?? null,
     provider: server.provider,
     expiresAt: server.expiresAt,
     price: server.price,
@@ -97,6 +152,13 @@ function toServerInput(server: VpsServerView): VpsServerInput {
 function toFormValues(server: VpsServerView): VpsFormValues {
   return {
     name: server.name,
+    region: server.region ?? '',
+    ip: server.ip ?? '',
+    monthlyTrafficGB:
+      server.monthlyTrafficGB !== null && server.monthlyTrafficGB !== undefined
+        ? String(server.monthlyTrafficGB)
+        : '',
+    role: server.role ?? '',
     provider: server.provider ?? '',
     expiresAt: server.expiresAt,
     price: server.price !== null ? String(server.price) : '',
@@ -120,6 +182,21 @@ function validateFormValues(
   }
   if (!isValidCalendarDate(expiresAt)) {
     return { ok: false, message: '到期日期格式错误，应为 YYYY-MM-DD' };
+  }
+
+  const ipText = values.ip.trim();
+  if (ipText !== '' && !isValidIpInput(ipText)) {
+    return { ok: false, message: 'IP 地址格式错误，应为有效的 IPv4 或 IPv6 地址' };
+  }
+
+  const trafficText = values.monthlyTrafficGB.trim();
+  let monthlyTrafficGB: number | null = null;
+  if (trafficText !== '') {
+    const parsedTraffic = Number(trafficText);
+    if (!Number.isFinite(parsedTraffic) || parsedTraffic < 0) {
+      return { ok: false, message: '月流量必须为大于或等于 0 的数字' };
+    }
+    monthlyTrafficGB = parsedTraffic;
   }
 
   const priceText = values.price.trim();
@@ -148,6 +225,10 @@ function validateFormValues(
     ok: true,
     payload: {
       name,
+      region: values.region.trim() || null,
+      ip: ipText || null,
+      monthlyTrafficGB,
+      role: values.role.trim() || null,
       provider: values.provider.trim() || null,
       expiresAt,
       price,
@@ -169,9 +250,19 @@ export function VpsPage() {
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [revealedIpIds, setRevealedIpIds] = useState<Record<string, boolean>>({});
+  const [expandedNoteIds, setExpandedNoteIds] = useState<Record<string, boolean>>({});
 
   const currentData = localData ?? data;
   const isReadonly = Boolean(currentData?.readonly);
+
+  const toggleIpReveal = (id: string) => {
+    setRevealedIpIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleNoteExpand = (id: string) => {
+    setExpandedNoteIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const handleRefresh = async () => {
     setLocalData(null);
@@ -266,7 +357,7 @@ export function VpsPage() {
             : '云服务器状态与到期提醒管理'
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {isReadonly ? <StatusBadge status="info" label="只读模式" showDot={false} /> : null}
             {canEdit ? (
               <Button type="button" size="sm" onClick={openAddForm} disabled={saving}>
@@ -365,6 +456,17 @@ export function VpsPage() {
                       />
                     </div>
                     <div className="space-y-1.5">
+                      <Label htmlFor="vps-region">地区</Label>
+                      <Input
+                        id="vps-region"
+                        value={formValues.region}
+                        onChange={(e) =>
+                          setFormValues((prev) => ({ ...prev, region: e.target.value }))
+                        }
+                        placeholder="例如：香港 / 日本 / 洛杉矶"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
                       <Label htmlFor="vps-provider">服务商</Label>
                       <Input
                         id="vps-provider"
@@ -384,6 +486,40 @@ export function VpsPage() {
                           setFormValues((prev) => ({ ...prev, expiresAt: e.target.value }))
                         }
                         placeholder="2026-12-31"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="vps-ip">IP 地址</Label>
+                      <Input
+                        id="vps-ip"
+                        value={formValues.ip}
+                        onChange={(e) => setFormValues((prev) => ({ ...prev, ip: e.target.value }))}
+                        placeholder="例如：192.0.2.10"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="vps-monthlyTrafficGB">月流量（GB）</Label>
+                      <Input
+                        id="vps-monthlyTrafficGB"
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={formValues.monthlyTrafficGB}
+                        onChange={(e) =>
+                          setFormValues((prev) => ({ ...prev, monthlyTrafficGB: e.target.value }))
+                        }
+                        placeholder="例如：1000"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="vps-role">用途</Label>
+                      <Input
+                        id="vps-role"
+                        value={formValues.role}
+                        onChange={(e) =>
+                          setFormValues((prev) => ({ ...prev, role: e.target.value }))
+                        }
+                        placeholder="例如：主面板/主线路"
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -411,7 +547,7 @@ export function VpsPage() {
                         placeholder="CNY / USD"
                       />
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
                       <Label htmlFor="vps-renewUrl">续费链接</Label>
                       <Input
                         id="vps-renewUrl"
@@ -439,7 +575,7 @@ export function VpsPage() {
                     </p>
                   ) : null}
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button type="submit" size="sm" disabled={saving}>
                       {saving ? '保存中...' : '保存'}
                     </Button>
@@ -477,124 +613,262 @@ export function VpsPage() {
               }
             />
           ) : (
-            <Card>
-              <CardContent className="p-0">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/40 text-xs font-medium text-muted-foreground">
-                        <th className="px-4 py-3">名称</th>
-                        <th className="px-4 py-3">服务商</th>
-                        <th className="px-4 py-3">到期日</th>
-                        <th className="px-4 py-3">剩余天数</th>
-                        <th className="px-4 py-3">价格</th>
-                        <th className="px-4 py-3">续费链接</th>
-                        <th className="px-4 py-3">备注</th>
-                        {!isReadonly ? <th className="px-4 py-3 text-right">操作</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {currentData.servers.map((server, index) => {
-                        const badge = getLevelBadgeProps(server);
-                        const isConfirmingDelete = confirmDeleteId === server.id;
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {currentData.servers.map((server, index) => {
+                const badge = getLevelBadgeProps(server);
+                const panelStyles = getCountdownPanelStyles(server);
+                const cardTitle = formatVpsCardTitle(server.name, server.region);
+                const trafficLabel = formatMonthlyTraffic(server.monthlyTrafficGB ?? null);
+                const priceLabel = formatVpsPrice(server.price, server.currency);
+                const roleLabel = server.role ?? null;
+                const hasTags = Boolean(trafficLabel || priceLabel || roleLabel);
+                const isConfirmingDelete = confirmDeleteId === server.id;
+                const isIpRevealed = Boolean(revealedIpIds[server.id]);
+                const isNoteExpanded = Boolean(expandedNoteIds[server.id]);
+                const longNote = isLongNote(server.note);
 
-                        return (
-                          <tr key={server.id} className="hover:bg-muted/20">
-                            <td className="px-4 py-3 font-medium text-foreground">{server.name}</td>
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {server.provider ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-xs text-foreground">
-                              {server.expiresAt || '—'}
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="space-y-1">
-                                <StatusBadge status={badge.status} label={badge.label} />
-                                {server.error ? (
-                                  <p className="text-xs text-destructive">{server.error}</p>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap text-foreground">
-                              {formatPrice(server.price, server.currency)}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {server.renewUrl ? (
-                                <a
-                                  href={server.renewUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-primary hover:underline"
-                                >
-                                  <span>前往续费</span>
-                                  <ExternalLink className="size-3.5" aria-hidden="true" />
-                                </a>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </td>
-                            <td className="max-w-xs px-4 py-3 text-muted-foreground">
-                              {server.note ?? '—'}
-                            </td>
-                            {!isReadonly ? (
-                              <td className="px-4 py-3 text-right whitespace-nowrap">
-                                {isConfirmingDelete ? (
-                                  <div className="inline-flex items-center gap-1.5">
-                                    <Button
-                                      type="button"
-                                      variant="destructive"
-                                      size="sm"
-                                      onClick={() => void handleDelete(index)}
-                                      disabled={saving}
-                                    >
-                                      确认删除
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => setConfirmDeleteId(null)}
-                                      disabled={saving}
-                                    >
-                                      取消
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="inline-flex items-center gap-1">
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      aria-label={`编辑 ${server.name}`}
-                                      onClick={() => openEditForm(index, server)}
-                                      disabled={saving}
-                                    >
-                                      <Pencil className="size-3.5" aria-hidden="true" />
-                                      <span>编辑</span>
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      aria-label={`删除 ${server.name}`}
-                                      onClick={() => setConfirmDeleteId(server.id)}
-                                      disabled={saving}
-                                    >
-                                      <Trash2 className="size-3.5" aria-hidden="true" />
-                                      <span>删除</span>
-                                    </Button>
-                                  </div>
-                                )}
-                              </td>
+                return (
+                  <Card key={server.id} className="flex min-w-0 flex-col justify-between">
+                    <CardHeader className="space-y-3 pb-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-start gap-2.5">
+                          <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                            <Server className="size-4" aria-hidden="true" />
+                          </div>
+                          <div className="min-w-0">
+                            <CardTitle className="break-words text-base leading-snug">
+                              {cardTitle}
+                            </CardTitle>
+                            {server.provider ? (
+                              <CardDescription className="mt-1 truncate">
+                                {server.provider}
+                              </CardDescription>
                             ) : null}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
+                          </div>
+                        </div>
+
+                        {!isReadonly ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            {isConfirmingDelete ? (
+                              <div className="inline-flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => void handleDelete(index)}
+                                  disabled={saving}
+                                >
+                                  确认删除
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  disabled={saving}
+                                >
+                                  取消
+                                </Button>
+                              </div>
+                            ) : (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  aria-label={`编辑 ${server.name}`}
+                                  onClick={() => openEditForm(index, server)}
+                                  disabled={saving}
+                                >
+                                  <Pencil className="size-3.5" aria-hidden="true" />
+                                  <span>编辑</span>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  aria-label={`删除 ${server.name}`}
+                                  onClick={() => setConfirmDeleteId(server.id)}
+                                  disabled={saving}
+                                >
+                                  <Trash2 className="size-3.5" aria-hidden="true" />
+                                  <span>删除</span>
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="flex flex-1 flex-col gap-3.5">
+                      <div
+                        className={cn('rounded-lg border px-3.5 py-3', panelStyles.containerClass)}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-baseline">
+                              {server.error || server.daysLeft === null || server.level === null ? (
+                                <span
+                                  className={cn(
+                                    'text-2xl font-bold tracking-tight',
+                                    panelStyles.accentClass,
+                                  )}
+                                >
+                                  异常
+                                </span>
+                              ) : server.daysLeft < 0 ? (
+                                <>
+                                  <span
+                                    className={cn(
+                                      'text-2xl font-bold tracking-tight tabular-nums',
+                                      panelStyles.accentClass,
+                                    )}
+                                  >
+                                    {Math.abs(server.daysLeft)}
+                                  </span>
+                                  <span className="ml-1 text-xs font-medium text-muted-foreground">
+                                    天前到期
+                                  </span>
+                                </>
+                              ) : server.daysLeft === 0 ? (
+                                <>
+                                  <span
+                                    className={cn(
+                                      'text-2xl font-bold tracking-tight tabular-nums',
+                                      panelStyles.accentClass,
+                                    )}
+                                  >
+                                    0
+                                  </span>
+                                  <span className="ml-1 text-xs font-medium text-muted-foreground">
+                                    天（今日）
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span
+                                    className={cn(
+                                      'text-2xl font-bold tracking-tight tabular-nums',
+                                      panelStyles.accentClass,
+                                    )}
+                                  >
+                                    {server.daysLeft}
+                                  </span>
+                                  <span className="ml-1 text-xs font-medium text-muted-foreground">
+                                    天
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                            <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                              到期日：{server.expiresAt || '—'}
+                            </p>
+                          </div>
+
+                          <StatusBadge status={badge.status} label={badge.label} />
+                        </div>
+
+                        {server.error ? (
+                          <p className="mt-1.5 text-xs text-destructive">{server.error}</p>
+                        ) : null}
+                      </div>
+
+                      {hasTags ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {trafficLabel ? (
+                            <span className="inline-flex items-center rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground">
+                              {trafficLabel}
+                            </span>
+                          ) : null}
+                          {priceLabel ? (
+                            <span className="inline-flex items-center rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground">
+                              {priceLabel}
+                            </span>
+                          ) : null}
+                          {roleLabel ? (
+                            <span className="inline-flex items-center rounded-md border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground">
+                              {roleLabel}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {server.ip ? (
+                        <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/30 px-2.5 py-1.5 text-xs">
+                          <span className="shrink-0 text-muted-foreground">IP</span>
+                          <button
+                            type="button"
+                            onClick={() => toggleIpReveal(server.id)}
+                            aria-label={isIpRevealed ? '隐藏 IP' : '显示 IP'}
+                            aria-pressed={isIpRevealed}
+                            className="inline-flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 font-mono text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          >
+                            <span className={isIpRevealed ? 'break-all text-right' : 'truncate'}>
+                              {isIpRevealed ? server.ip : maskIpAddress(server.ip)}
+                            </span>
+                            {isIpRevealed ? (
+                              <EyeOff
+                                className="size-3.5 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <Eye
+                                className="size-3.5 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                            )}
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {server.note ? (
+                        longNote ? (
+                          <div className="space-y-1.5">
+                            <button
+                              type="button"
+                              onClick={() => toggleNoteExpand(server.id)}
+                              aria-expanded={isNoteExpanded}
+                              className="inline-flex items-center gap-1 rounded text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            >
+                              <span>{isNoteExpanded ? '收起详情' : '详情'}</span>
+                              {isNoteExpanded ? (
+                                <ChevronUp className="size-3.5" aria-hidden="true" />
+                              ) : (
+                                <ChevronDown className="size-3.5" aria-hidden="true" />
+                              )}
+                            </button>
+                            {isNoteExpanded ? (
+                              <p className="rounded-md bg-muted/40 px-2.5 py-2 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
+                                {server.note}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-xs leading-relaxed break-words text-muted-foreground">
+                            {server.note}
+                          </p>
+                        )
+                      ) : null}
+
+                      {server.renewUrl ? (
+                        <div className="mt-auto pt-1">
+                          <a
+                            href={server.renewUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                          >
+                            <span>前往续费</span>
+                            <ExternalLink className="size-3.5" aria-hidden="true" />
+                          </a>
+                        </div>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
           )}
         </>
       )}
