@@ -7,6 +7,7 @@ import {
   ALL_CONFIG_KEYS,
   CONFIG_MODULE_KEYS,
   CONFIG_MODULE_LABELS,
+  WINDOWS_SSH_REQUIRED_KEYS,
   type AppConfig,
   type AppSectionConfig,
   type AuthSectionConfig,
@@ -129,6 +130,36 @@ const positiveIntSchema = (label: string) =>
     )
     .transform((val) => Number(val));
 
+const nonNegativeIntSchema = (label: string) =>
+  z
+    .string({ message: `${label}必须是大于或等于 0 的整数` })
+    .trim()
+    .refine(
+      (val) => {
+        if (!/^\d+$/.test(val)) return false;
+        const num = Number(val);
+        return Number.isSafeInteger(num) && num >= 0;
+      },
+      { message: `${label}必须是大于或等于 0 的整数` },
+    )
+    .transform((val) => Number(val));
+
+const timeZoneSchema = z
+  .string({ message: '必须是有效的 IANA 时区名称（例如 Asia/Shanghai）' })
+  .trim()
+  .refine(
+    (val) => {
+      if (!val) return false;
+      try {
+        new Intl.DateTimeFormat('en-US', { timeZone: val });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: '必须是有效的 IANA 时区名称（例如 Asia/Shanghai）' },
+  );
+
 const httpUrlSchema = z
   .string({ message: '必须是有效的 http:// 或 https:// 地址' })
   .trim()
@@ -164,6 +195,7 @@ const appEnvSchema = z.object({
   WEB_DIST_DIR: z.preprocess(emptyToUndefined, nonEmptyStringSchema('前端产物目录').optional()),
   COOKIE_SECURE: z.preprocess(emptyToUndefined, booleanStringSchema.optional()),
   TRUST_PROXY: z.preprocess(emptyToUndefined, booleanStringSchema.default(false)),
+  TZ_DISPLAY: z.preprocess(emptyToUndefined, timeZoneSchema.default('Asia/Shanghai')),
 });
 
 const authEnvSchema = z.object({
@@ -204,16 +236,187 @@ const moviepilotEnvSchema = z.object({
   MOVIEPILOT_API_TOKEN: nonEmptyStringSchema('MoviePilot API 令牌'),
 });
 
-const windowsEnvSchema = z.object({
+const windowsSshEnvSchema = z.object({
   WIN_SSH_HOST: nonEmptyStringSchema('Windows SSH 主机'),
   WIN_SSH_PORT: portSchema,
   WIN_SSH_USER: nonEmptyStringSchema('Windows SSH 用户名'),
   WIN_SSH_KEY_PATH: nonEmptyStringSchema('Windows SSH 私钥路径'),
 });
 
-const vpsEnvSchema = z.object({
-  VPS_LIST_FILE: nonEmptyStringSchema('VPS 清单文件路径'),
-});
+const windowsTimeoutSchema = positiveIntSchema('Windows SSH 超时时间（毫秒）');
+const windowsCacheSecondsSchema = nonNegativeIntSchema('Windows 状态缓存时间（秒）');
+const vpsFileSchema = nonEmptyStringSchema('VPS 清单文件路径');
+
+function parseSingleKey<T>(
+  moduleName: ConfigModuleName,
+  key: string,
+  schema: z.ZodType<T>,
+  rawValue: string | undefined,
+  defaultValue: T,
+  issues: ConfigIssue[],
+): { ok: true; value: T } | { ok: false } {
+  if (!isEnvValueFilled(rawValue)) {
+    return { ok: true, value: defaultValue };
+  }
+  const result = schema.safeParse(rawValue);
+  if (!result.success) {
+    issues.push({
+      module: moduleName,
+      key,
+      reason: result.error.issues[0]?.message || '配置格式无效',
+    });
+    return { ok: false };
+  }
+  return { ok: true, value: result.data };
+}
+
+function parseVpsSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): VpsSectionConfig | undefined {
+  const readonlyRes = parseSingleKey(
+    'vps',
+    'VPS_READONLY',
+    booleanStringSchema,
+    env.VPS_READONLY,
+    false,
+    issues,
+  );
+
+  if (!isEnvValueFilled(env.VPS_LIST_FILE)) {
+    return undefined;
+  }
+
+  const fileRes = vpsFileSchema.safeParse(env.VPS_LIST_FILE);
+  if (!fileRes.success) {
+    issues.push({
+      module: 'vps',
+      key: 'VPS_LIST_FILE',
+      reason: fileRes.error.issues[0]?.message || '配置格式无效',
+    });
+    return undefined;
+  }
+
+  if (!readonlyRes.ok) {
+    return undefined;
+  }
+
+  return {
+    VPS_LIST_FILE: fileRes.data,
+    VPS_READONLY: readonlyRes.value,
+  };
+}
+
+function parseWindowsSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): WindowsSectionConfig | undefined {
+  const timeoutRes = parseSingleKey(
+    'windows',
+    'WIN_SSH_TIMEOUT_MS',
+    windowsTimeoutSchema,
+    env.WIN_SSH_TIMEOUT_MS,
+    8000,
+    issues,
+  );
+  const cacheRes = parseSingleKey(
+    'windows',
+    'WIN_CACHE_SECONDS',
+    windowsCacheSecondsSchema,
+    env.WIN_CACHE_SECONDS,
+    30,
+    issues,
+  );
+  const mockRes = parseSingleKey(
+    'windows',
+    'WIN_MOCK',
+    booleanStringSchema,
+    env.WIN_MOCK,
+    false,
+    issues,
+  );
+
+  const isMock = mockRes.ok && mockRes.value;
+  const filledSshKeys = WINDOWS_SSH_REQUIRED_KEYS.filter((key) => isEnvValueFilled(env[key]));
+
+  if (isMock) {
+    const partialSsh: Partial<
+      Pick<
+        WindowsSectionConfig,
+        'WIN_SSH_HOST' | 'WIN_SSH_PORT' | 'WIN_SSH_USER' | 'WIN_SSH_KEY_PATH'
+      >
+    > = {};
+    for (const key of filledSshKeys) {
+      const fieldSchema = windowsSshEnvSchema.shape[key];
+      const fieldResult = fieldSchema.safeParse(env[key]);
+      if (!fieldResult.success) {
+        issues.push({
+          module: 'windows',
+          key,
+          reason: fieldResult.error.issues[0]?.message || '配置格式无效',
+        });
+      } else {
+        (partialSsh as Record<string, unknown>)[key] = fieldResult.data;
+      }
+    }
+
+    if (!timeoutRes.ok || !cacheRes.ok) {
+      return undefined;
+    }
+
+    return {
+      ...partialSsh,
+      WIN_SSH_TIMEOUT_MS: timeoutRes.value,
+      WIN_CACHE_SECONDS: cacheRes.value,
+      WIN_MOCK: true,
+    };
+  }
+
+  if (filledSshKeys.length === 0) {
+    return undefined;
+  }
+
+  if (filledSshKeys.length < WINDOWS_SSH_REQUIRED_KEYS.length) {
+    const missingKeys = WINDOWS_SSH_REQUIRED_KEYS.filter((key) => !isEnvValueFilled(env[key]));
+    for (const key of missingKeys) {
+      issues.push({
+        module: 'windows',
+        key,
+        reason: '模块已部分配置，缺少该必填项',
+      });
+    }
+    for (const key of filledSshKeys) {
+      const fieldSchema = windowsSshEnvSchema.shape[key];
+      const fieldResult = fieldSchema.safeParse(env[key]);
+      if (!fieldResult.success) {
+        issues.push({
+          module: 'windows',
+          key,
+          reason: fieldResult.error.issues[0]?.message || '配置格式无效',
+        });
+      }
+    }
+    return undefined;
+  }
+
+  const sshInput = pickSectionInput(env, WINDOWS_SSH_REQUIRED_KEYS);
+  const sshResult = windowsSshEnvSchema.safeParse(sshInput);
+  if (!sshResult.success) {
+    collectZodIssues('windows', sshResult.error.issues, issues);
+    return undefined;
+  }
+
+  if (!timeoutRes.ok || !cacheRes.ok || !mockRes.ok) {
+    return undefined;
+  }
+
+  return {
+    ...sshResult.data,
+    WIN_SSH_TIMEOUT_MS: timeoutRes.value,
+    WIN_CACHE_SECONDS: cacheRes.value,
+    WIN_MOCK: false,
+  };
+}
 
 function pickSectionInput(
   env: Record<string, string | undefined>,
@@ -337,20 +540,8 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     env,
     issues,
   );
-  const windows = parseOptionalSection<WindowsSectionConfig>(
-    'windows',
-    CONFIG_MODULE_KEYS.windows,
-    windowsEnvSchema,
-    env,
-    issues,
-  );
-  const vps = parseOptionalSection<VpsSectionConfig>(
-    'vps',
-    CONFIG_MODULE_KEYS.vps,
-    vpsEnvSchema,
-    env,
-    issues,
-  );
+  const windows = parseWindowsSection(env, issues);
+  const vps = parseVpsSection(env, issues);
 
   if (issues.length > 0 || !appResult.success || !authResult.success) {
     throw new ConfigError(issues);
@@ -369,6 +560,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
       : path.resolve(SERVER_ROOT, '../web/dist'),
     COOKIE_SECURE: parsedApp.COOKIE_SECURE ?? parsedApp.NODE_ENV === 'production',
     TRUST_PROXY: parsedApp.TRUST_PROXY,
+    TZ_DISPLAY: parsedApp.TZ_DISPLAY,
   };
 
   const authSection: AuthSectionConfig = {

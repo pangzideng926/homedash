@@ -30,6 +30,7 @@ describe('配置分组校验与状态报告', () => {
     expect(prodConfig.app.HOST).toBe('0.0.0.0');
     expect(prodConfig.app.COOKIE_SECURE).toBe(true);
     expect(prodConfig.app.TRUST_PROXY).toBe(false);
+    expect(prodConfig.app.TZ_DISPLAY).toBe('Asia/Shanghai');
     expect(prodConfig.auth.SESSION_TTL_HOURS).toBe(168);
     expect(prodConfig.auth.SESSION_TTL_SECONDS).toBe(168 * 3600);
     expect(prodConfig.auth.LOGIN_MAX_ATTEMPTS).toBe(5);
@@ -157,7 +158,11 @@ describe('配置分组校验与状态报告', () => {
     expect(fullConfig.qbittorrent?.QBIT_URL).toBe('http://192.0.2.10:8080');
     expect(fullConfig.moviepilot?.MOVIEPILOT_URL).toBe('https://mp.example.com');
     expect(fullConfig.windows?.WIN_SSH_PORT).toBe(22);
+    expect(fullConfig.windows?.WIN_SSH_TIMEOUT_MS).toBe(8000);
+    expect(fullConfig.windows?.WIN_CACHE_SECONDS).toBe(30);
+    expect(fullConfig.windows?.WIN_MOCK).toBe(false);
     expect(fullConfig.vps?.VPS_LIST_FILE).toBe('./secrets/vps.json');
+    expect(fullConfig.vps?.VPS_READONLY).toBe(false);
 
     const fullStatus = getConfigStatus(fullConfig);
     expect(fullStatus.modules.nas.status).toBe('configured');
@@ -194,6 +199,43 @@ describe('配置分组校验与状态报告', () => {
     expect(partialStatus.modules.qbittorrent.keys.QBIT_PASSWORD).toBe(true);
     expect(JSON.stringify(partialStatus)).not.toContain('fake-qbit-password-999');
     expect(JSON.stringify(partialStatus)).not.toContain('192.0.2.10');
+  });
+
+  it('支持 TZ_DISPLAY、VPS_READONLY、WIN_SSH_TIMEOUT_MS、WIN_CACHE_SECONDS 及 WIN_MOCK=true', () => {
+    const mockConfig = parseConfig({
+      ...BASE_ENV,
+      TZ_DISPLAY: 'UTC',
+      WIN_MOCK: 'true',
+      WIN_SSH_TIMEOUT_MS: '5000',
+      WIN_CACHE_SECONDS: '0',
+      VPS_LIST_FILE: './secrets/vps.json',
+      VPS_READONLY: 'true',
+    });
+
+    expect(mockConfig.app.TZ_DISPLAY).toBe('UTC');
+    expect(mockConfig.windows).toEqual({
+      WIN_MOCK: true,
+      WIN_SSH_TIMEOUT_MS: 5000,
+      WIN_CACHE_SECONDS: 0,
+    });
+    expect(mockConfig.vps).toEqual({
+      VPS_LIST_FILE: './secrets/vps.json',
+      VPS_READONLY: true,
+    });
+
+    const status = getConfigStatus(mockConfig);
+    expect(status.modules.windows.status).toBe('configured');
+    expect(status.modules.windows.keys.WIN_MOCK).toBe(true);
+    expect(status.modules.vps.status).toBe('configured');
+    expect(status.modules.vps.keys.VPS_READONLY).toBe(true);
+
+    expect(() =>
+      parseConfig({
+        ...BASE_ENV,
+        TZ_DISPLAY: 'Invalid/Timezone',
+        WIN_SSH_TIMEOUT_MS: '0',
+      }),
+    ).toThrow(ConfigError);
   });
 });
 

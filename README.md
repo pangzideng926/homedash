@@ -50,6 +50,7 @@ homedash/
 │   ├── vite.config.ts         # Vite 与 /api 开发代理配置
 │   └── package.json
 ├── .env.example               # 环境变量模板
+├── vps.example.json           # VPS 清单 JSON 示例文件（全部为占位数据）
 ├── .dockerignore              # Docker 构建上下文忽略规则
 ├── Dockerfile                 # 多阶段单镜像构建文件
 ├── docker-compose.yml         # Docker Compose 部署示例
@@ -138,6 +139,7 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 | `WEB_DIST_DIR`  | 否   | `../web/dist`                 | 生产环境托管前端静态资源目录                                                           |
 | `COOKIE_SECURE` | 否   | 生产环境 `true`，其他 `false` | 会话 Cookie 是否强制 HTTPS；**局域网纯 HTTP 访问生产/Docker 环境时请显式设为 `false`** |
 | `TRUST_PROXY`   | 否   | `false`                       | 是否信任反向代理的 `X-Forwarded-For` 请求头作为客户端 IP（仅在可信反代后开启）         |
+| `TZ_DISPLAY`    | 否   | `Asia/Shanghai`               | 展示日期与 VPS 到期天数计算使用的 IANA 时区名称                                        |
 
 #### 2. `auth`（认证与会话）
 
@@ -152,13 +154,18 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 
 #### 3. 可选采集模块（全部未填时视为“未配置”；同一模块不可部分填写）
 
-| 模块          | 环境变量                                                           | 说明                                        |
-| ------------- | ------------------------------------------------------------------ | ------------------------------------------- |
-| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH` | NAS SSH 采集连接参数与私钥路径              |
-| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`                       | qBittorrent WebUI 地址与凭据                |
-| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`                           | MoviePilot 服务地址与 API 令牌              |
-| `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH` | 家用 Windows 主机 SSH 连接参数与私钥路径    |
-| `vps`         | `VPS_LIST_FILE`                                                    | 本地 VPS 信息 JSON 文件路径（名称与到期日） |
+| 模块          | 环境变量                                                                                                                  | 说明                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`                                                        | NAS SSH 采集连接参数与私钥路径                                                                                    |
+| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`                                                                              | qBittorrent WebUI 地址与凭据                                                                                      |
+| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`                                                                                  | MoviePilot 服务地址与 API 令牌                                                                                    |
+| `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH`、`WIN_SSH_TIMEOUT_MS`、`WIN_CACHE_SECONDS`、`WIN_MOCK` | 家用 Windows 主机只读 SSH 采集参数与超时/缓存/模拟开关；`WIN_MOCK=true` 时视为已配置并直接返回 `DEMO-PC` 模拟数据 |
+| `vps`         | `VPS_LIST_FILE`、`VPS_READONLY`                                                                                           | 本地 VPS 信息 JSON 文件路径与只读模式开关（`VPS_READONLY=true` 时禁止页面编辑与 `PUT /api/vps` 写入）             |
+
+#### 4. VPS 清单文件与 Windows 只读采集说明
+
+- **VPS 清单文件（`VPS_LIST_FILE`）**：可参考仓库根目录的 [`vps.example.json`](./vps.example.json) 复制为本地文件（如 `./secrets/vps.json`）。`name` 与 `expiresAt`（`YYYY-MM-DD`）为必填字段，`id`、`provider`、`price`、`currency`、`renewUrl`、`note` 均可选/可空。通过网页编辑保存时，服务端会在写入前生成同目录 `.bak` 备份并执行临时文件原子替换。
+- **家用 Windows 只读采集（`windows`）**：后端通过 `ssh2`（纯 JS 实现，适合 Docker 部署）连接 Windows OpenSSH（默认 shell 为 PowerShell），仅执行固定的 `Get-CimInstance` 只读查询命令（通过 `-EncodedCommand` 传递），**绝不包含任何重启、关机、安装或修改远端状态的命令**。开发/演示环境可设置 `WIN_MOCK=true` 跳过 SSH 直接返回模拟数据。
 
 ### 校验失败报错与安全脱敏
 

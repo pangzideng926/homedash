@@ -255,3 +255,129 @@ export async function fetchSettingsStatus(signal?: AbortSignal): Promise<Setting
     fallbackErrorMessage: '获取配置状态失败，请稍后重试',
   });
 }
+
+export type VpsLevel = 'expired' | 'danger' | 'warning' | 'ok';
+
+export type VpsFileErrorCode =
+  'UNCONFIGURED' | 'FILE_NOT_FOUND' | 'READ_ERROR' | 'INVALID_JSON' | 'INVALID_FORMAT';
+
+export interface VpsServerRecord {
+  id: string;
+  name: string;
+  provider: string | null;
+  expiresAt: string;
+  price: number | null;
+  currency: string | null;
+  renewUrl: string | null;
+  note: string | null;
+}
+
+export interface VpsServerView extends VpsServerRecord {
+  daysLeft: number | null;
+  level: VpsLevel | null;
+  error?: string;
+}
+
+export interface VpsSummary {
+  total: number;
+  expired: number;
+  within7Days: number;
+  within30Days: number;
+  invalid: number;
+}
+
+export interface VpsListResponse {
+  configured: boolean;
+  readonly: boolean;
+  timezone: string;
+  servers: VpsServerView[];
+  summary: VpsSummary;
+  errorCode?: VpsFileErrorCode;
+  error?: string;
+}
+
+export interface VpsServerInput {
+  id?: string;
+  name: string;
+  provider?: string | null;
+  expiresAt: string;
+  price?: number | null;
+  currency?: string | null;
+  renewUrl?: string | null;
+  note?: string | null;
+}
+
+export async function fetchVpsList(signal?: AbortSignal): Promise<VpsListResponse> {
+  return apiRequest<VpsListResponse>('/api/vps', {
+    method: 'GET',
+    ...(signal ? { signal } : {}),
+    fallbackErrorMessage: '获取 VPS 列表失败，请稍后重试',
+  });
+}
+
+export async function saveVpsList(servers: VpsServerInput[]): Promise<VpsListResponse> {
+  return apiRequest<VpsListResponse>('/api/vps', {
+    method: 'PUT',
+    body: { servers },
+    fallbackErrorMessage: '保存 VPS 列表失败，请稍后重试',
+  });
+}
+
+export type WindowsErrorCode =
+  | 'UNCONFIGURED'
+  | 'KEY_FILE_ERROR'
+  | 'TIMEOUT'
+  | 'AUTH_FAILED'
+  | 'CONNECTION_FAILED'
+  | 'COMMAND_FAILED'
+  | 'PARSE_FAILED';
+
+export interface WindowsCpuInfo {
+  model: string;
+  loadPercent: number;
+}
+
+export interface WindowsMemoryInfo {
+  totalBytes: number;
+  freeBytes: number;
+  usedPercent: number;
+}
+
+export interface WindowsDiskInfo {
+  drive: string;
+  label: string;
+  totalBytes: number;
+  freeBytes: number;
+  usedPercent: number;
+}
+
+export interface WindowsStatusData {
+  hostname: string;
+  os: string;
+  bootTime: string;
+  uptimeSeconds: number;
+  cpu: WindowsCpuInfo;
+  memory: WindowsMemoryInfo;
+  disks: WindowsDiskInfo[];
+}
+
+export interface WindowsStatusResponse {
+  online: boolean;
+  checkedAt: string;
+  cached: boolean;
+  errorCode?: WindowsErrorCode;
+  error?: string;
+  data?: WindowsStatusData;
+}
+
+export async function fetchWindowsStatus(options?: {
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<WindowsStatusResponse> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<WindowsStatusResponse>(`/api/windows/status${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取家用电脑状态失败，请稍后重试',
+  });
+}
