@@ -1,9 +1,12 @@
 /**
  * Windows 只读状态采集脚本（严格只读）：
- * 仅通过 Get-CimInstance 查询操作系统、主机名、处理器负载、内存与本地固定磁盘（DriveType=3），
+ * 仅在开头设置当前 PowerShell 进程的标准输出编码为 UTF-8（[Console]::OutputEncoding 仅作用于当前进程输出，不修改系统设置，仍保持只读），
+ * 避免中文 Windows 通过 SSH 输出时使用系统代码页（如 GBK）导致 os 等字段中的中文乱码；
+ * 随后仅通过 Get-CimInstance 查询操作系统、主机名、处理器负载、内存与本地固定磁盘（DriveType=3），
  * 并通过 ConvertTo-Json -Compress 输出 JSON；绝对不包含重启、关机、安装或写文件等任何修改操作。
  */
 export const WINDOWS_READONLY_STATUS_SCRIPT = [
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
   "$ErrorActionPreference = 'Stop'",
   '$os = Get-CimInstance -ClassName Win32_OperatingSystem',
   '$cs = Get-CimInstance -ClassName Win32_ComputerSystem',

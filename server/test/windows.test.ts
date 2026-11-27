@@ -73,6 +73,16 @@ describe('Windows 只读采集命令与输出解析', () => {
     );
   });
 
+  it('在脚本最开头设置当前进程输出编码为 UTF-8', () => {
+    const utf8OutputSetting = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8';
+    expect(WINDOWS_READONLY_STATUS_SCRIPT).toContain(utf8OutputSetting);
+    expect(WINDOWS_READONLY_STATUS_SCRIPT.split('\n')[0]).toBe(utf8OutputSetting);
+
+    const base64Part = WINDOWS_READONLY_STATUS_COMMAND.split('-EncodedCommand ')[1] ?? '';
+    const decoded = Buffer.from(base64Part, 'base64').toString('utf16le');
+    expect(decoded).toContain(utf8OutputSetting);
+  });
+
   it('解析多磁盘与单磁盘对象输出并计算使用率', () => {
     const multi = parseWindowsStatusOutput(`\uFEFF${SAMPLE_POWERSHELL_JSON}\n`);
     expect(multi.hostname).toBe('HOME-PC');
