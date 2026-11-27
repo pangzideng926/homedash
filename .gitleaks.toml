@@ -1,0 +1,16 @@
+title = "homedash gitleaks 配置"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "仅允许后端单元测试中的明显测试占位密钥"
+condition = "AND"
+paths = [
+  '''^server/test/.*\.test\.ts$''',
+]
+regexes = [
+  '''0123456789abcdef0123456789abcdef''',
+  '''test-[a-z0-9-]+''',
+  '''fake-[a-z0-9-]+''',
+]

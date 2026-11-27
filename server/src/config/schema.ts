@@ -1,0 +1,402 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+import { z } from 'zod';
+import {
+  ALL_CONFIG_KEYS,
+  CONFIG_MODULE_KEYS,
+  CONFIG_MODULE_LABELS,
+  type AppConfig,
+  type AppSectionConfig,
+  type AuthSectionConfig,
+  type ConfigKey,
+  type ConfigModuleName,
+  type MoviepilotSectionConfig,
+  type NasSectionConfig,
+  type QbittorrentSectionConfig,
+  type VpsSectionConfig,
+  type WindowsSectionConfig,
+} from './definitions.js';
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
+export const SERVER_ROOT = path.resolve(currentDir, '../..');
+export const REPO_ROOT = path.resolve(SERVER_ROOT, '..');
+
+export interface ConfigIssue {
+  module: ConfigModuleName;
+  key: string;
+  reason: string;
+}
+
+/**
+ * 配置校验异常：仅记录模块、变量名与错误原因，绝不包含任何环境变量值。
+ */
+export class ConfigError extends Error {
+  readonly issues: readonly ConfigIssue[];
+
+  constructor(issues: readonly ConfigIssue[]) {
+    super(formatConfigIssues(issues));
+    this.name = 'ConfigError';
+    this.issues = issues;
+  }
+}
+
+export function formatConfigIssues(issues: readonly ConfigIssue[]): string {
+  const lines = issues.map((issue) => {
+    const label = CONFIG_MODULE_LABELS[issue.module];
+    return `  - [${label}] ${issue.key}：${issue.reason}`;
+  });
+  return ['配置校验失败，请检查环境变量或 .env 文件：', ...lines].join('\n');
+}
+
+export function formatConfigError(error: ConfigError): string {
+  return formatConfigIssues(error.issues);
+}
+
+/**
+ * 依次尝试加载 server 目录、仓库根目录和当前工作目录下的 .env 文件。
+ * dotenv 默认不会覆盖已经存在的 process.env 变量。
+ */
+export function loadEnvFiles(): void {
+  const candidates = [
+    path.resolve(SERVER_ROOT, '.env'),
+    path.resolve(REPO_ROOT, '.env'),
+    path.resolve(process.cwd(), '.env'),
+  ];
+  const visited = new Set<string>();
+
+  for (const envPath of candidates) {
+    if (visited.has(envPath)) continue;
+    visited.add(envPath);
+    if (fs.existsSync(envPath)) {
+      dotenv.config({ path: envPath, quiet: true });
+    }
+  }
+}
+
+export function isEnvValueFilled(value: string | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function emptyToUndefined(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value === undefined ? undefined : String(value);
+  }
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
+const nonEmptyStringSchema = (label: string) =>
+  z
+    .string({ message: `${label}必须填写` })
+    .trim()
+    .min(1, `${label}不能为空`);
+
+const booleanStringSchema = z
+  .string({ message: '必须为布尔值（true/false/1/0/yes/no）' })
+  .trim()
+  .toLowerCase()
+  .refine((val) => ['true', 'false', '1', '0', 'yes', 'no'].includes(val), {
+    message: '必须为布尔值（true/false/1/0/yes/no）',
+  })
+  .transform((val) => val === 'true' || val === '1' || val === 'yes');
+
+const portSchema = z
+  .string({ message: '端口必须是 1 到 65535 之间的整数' })
+  .trim()
+  .refine(
+    (val) => {
+      if (!/^\d+$/.test(val)) return false;
+      const num = Number(val);
+      return Number.isInteger(num) && num >= 1 && num <= 65535;
+    },
+    { message: '端口必须是 1 到 65535 之间的整数' },
+  )
+  .transform((val) => Number(val));
+
+const positiveIntSchema = (label: string) =>
+  z
+    .string({ message: `${label}必须是大于 0 的整数` })
+    .trim()
+    .refine(
+      (val) => {
+        if (!/^\d+$/.test(val)) return false;
+        const num = Number(val);
+        return Number.isSafeInteger(num) && num >= 1;
+      },
+      { message: `${label}必须是大于 0 的整数` },
+    )
+    .transform((val) => Number(val));
+
+const httpUrlSchema = z
+  .string({ message: '必须是有效的 http:// 或 https:// 地址' })
+  .trim()
+  .refine(
+    (val) => {
+      try {
+        const parsed = new URL(val);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    },
+    { message: '必须是有效的 http:// 或 https:// 地址' },
+  );
+
+const nodeEnvSchema = z
+  .string({ message: '必须是 development、production 或 test 之一' })
+  .trim()
+  .refine(
+    (val): val is 'development' | 'production' | 'test' =>
+      val === 'development' || val === 'production' || val === 'test',
+    { message: '必须是 development、production 或 test 之一' },
+  );
+
+const appEnvSchema = z.object({
+  NODE_ENV: z.preprocess(emptyToUndefined, nodeEnvSchema.default('development')),
+  PORT: z.preprocess(emptyToUndefined, portSchema.default(3000)),
+  HOST: z.preprocess(emptyToUndefined, nonEmptyStringSchema('监听地址').default('0.0.0.0')),
+  DATABASE_URL: z.preprocess(
+    emptyToUndefined,
+    nonEmptyStringSchema('数据库路径').default('file:./data/homedash.db'),
+  ),
+  WEB_DIST_DIR: z.preprocess(emptyToUndefined, nonEmptyStringSchema('前端产物目录').optional()),
+  COOKIE_SECURE: z.preprocess(emptyToUndefined, booleanStringSchema.optional()),
+  TRUST_PROXY: z.preprocess(emptyToUndefined, booleanStringSchema.default(false)),
+});
+
+const authEnvSchema = z.object({
+  ADMIN_USERNAME: z.preprocess(emptyToUndefined, nonEmptyStringSchema('管理员用户名')),
+  ADMIN_PASSWORD_HASH: z.preprocess(emptyToUndefined, nonEmptyStringSchema('管理员密码哈希')),
+  SESSION_SECRET: z.preprocess(
+    emptyToUndefined,
+    z
+      .string({ message: '必须填写会话签名密钥（长度至少 32 个字符）' })
+      .min(32, '长度至少需要 32 个字符'),
+  ),
+  SESSION_TTL_HOURS: z.preprocess(
+    emptyToUndefined,
+    positiveIntSchema('会话有效期小时数').default(168),
+  ),
+  LOGIN_MAX_ATTEMPTS: z.preprocess(
+    emptyToUndefined,
+    positiveIntSchema('最大登录失败次数').default(5),
+  ),
+  LOGIN_LOCK_MINUTES: z.preprocess(emptyToUndefined, positiveIntSchema('登录锁定时长').default(15)),
+});
+
+const nasEnvSchema = z.object({
+  NAS_SSH_HOST: nonEmptyStringSchema('NAS SSH 主机'),
+  NAS_SSH_PORT: portSchema,
+  NAS_SSH_USER: nonEmptyStringSchema('NAS SSH 用户名'),
+  NAS_SSH_KEY_PATH: nonEmptyStringSchema('NAS SSH 私钥路径'),
+});
+
+const qbittorrentEnvSchema = z.object({
+  QBIT_URL: httpUrlSchema,
+  QBIT_USERNAME: nonEmptyStringSchema('qBittorrent 用户名'),
+  QBIT_PASSWORD: nonEmptyStringSchema('qBittorrent 密码'),
+});
+
+const moviepilotEnvSchema = z.object({
+  MOVIEPILOT_URL: httpUrlSchema,
+  MOVIEPILOT_API_TOKEN: nonEmptyStringSchema('MoviePilot API 令牌'),
+});
+
+const windowsEnvSchema = z.object({
+  WIN_SSH_HOST: nonEmptyStringSchema('Windows SSH 主机'),
+  WIN_SSH_PORT: portSchema,
+  WIN_SSH_USER: nonEmptyStringSchema('Windows SSH 用户名'),
+  WIN_SSH_KEY_PATH: nonEmptyStringSchema('Windows SSH 私钥路径'),
+});
+
+const vpsEnvSchema = z.object({
+  VPS_LIST_FILE: nonEmptyStringSchema('VPS 清单文件路径'),
+});
+
+function pickSectionInput(
+  env: Record<string, string | undefined>,
+  keys: readonly string[],
+): Record<string, string | undefined> {
+  const result: Record<string, string | undefined> = {};
+  for (const key of keys) {
+    result[key] = env[key];
+  }
+  return result;
+}
+
+function collectZodIssues(
+  moduleName: ConfigModuleName,
+  zodIssues: readonly z.core.$ZodIssue[],
+  issues: ConfigIssue[],
+): void {
+  const seenKeys = new Set<string>();
+  for (const issue of zodIssues) {
+    const key = typeof issue.path[0] === 'string' ? issue.path[0] : moduleName;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    issues.push({
+      module: moduleName,
+      key,
+      reason: issue.message || '配置格式无效',
+    });
+  }
+}
+
+function parseOptionalSection<TOutput>(
+  moduleName: ConfigModuleName,
+  keys: readonly string[],
+  schema: z.ZodObject<Record<string, z.ZodTypeAny>>,
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): TOutput | undefined {
+  const filledKeys = keys.filter((key) => isEnvValueFilled(env[key]));
+  if (filledKeys.length === 0) {
+    return undefined;
+  }
+
+  const missingKeys = keys.filter((key) => !isEnvValueFilled(env[key]));
+  if (missingKeys.length > 0) {
+    for (const key of missingKeys) {
+      issues.push({
+        module: moduleName,
+        key,
+        reason: '模块已部分配置，缺少该必填项',
+      });
+    }
+
+    for (const key of filledKeys) {
+      const fieldSchema = schema.shape[key];
+      if (!fieldSchema) continue;
+      const fieldResult = fieldSchema.safeParse(env[key]);
+      if (!fieldResult.success) {
+        const firstIssue = fieldResult.error.issues[0];
+        issues.push({
+          module: moduleName,
+          key,
+          reason: firstIssue?.message || '配置格式无效',
+        });
+      }
+    }
+    return undefined;
+  }
+
+  const input = pickSectionInput(env, keys);
+  const result = schema.safeParse(input);
+  if (!result.success) {
+    collectZodIssues(moduleName, result.error.issues, issues);
+    return undefined;
+  }
+
+  return result.data as TOutput;
+}
+
+function buildKeyPresence(env: Record<string, string | undefined>): Record<ConfigKey, boolean> {
+  const presence = {} as Record<ConfigKey, boolean>;
+  for (const key of ALL_CONFIG_KEYS) {
+    presence[key] = isEnvValueFilled(env[key]);
+  }
+  return presence;
+}
+
+/**
+ * 按模块分组校验并解析环境变量配置；失败时抛出仅含变量名和中文原因的 ConfigError。
+ */
+export function parseConfig(env: Record<string, string | undefined>): AppConfig {
+  const issues: ConfigIssue[] = [];
+
+  const appResult = appEnvSchema.safeParse(pickSectionInput(env, CONFIG_MODULE_KEYS.app));
+  if (!appResult.success) {
+    collectZodIssues('app', appResult.error.issues, issues);
+  }
+
+  const authResult = authEnvSchema.safeParse(pickSectionInput(env, CONFIG_MODULE_KEYS.auth));
+  if (!authResult.success) {
+    collectZodIssues('auth', authResult.error.issues, issues);
+  }
+
+  const nas = parseOptionalSection<NasSectionConfig>(
+    'nas',
+    CONFIG_MODULE_KEYS.nas,
+    nasEnvSchema,
+    env,
+    issues,
+  );
+  const qbittorrent = parseOptionalSection<QbittorrentSectionConfig>(
+    'qbittorrent',
+    CONFIG_MODULE_KEYS.qbittorrent,
+    qbittorrentEnvSchema,
+    env,
+    issues,
+  );
+  const moviepilot = parseOptionalSection<MoviepilotSectionConfig>(
+    'moviepilot',
+    CONFIG_MODULE_KEYS.moviepilot,
+    moviepilotEnvSchema,
+    env,
+    issues,
+  );
+  const windows = parseOptionalSection<WindowsSectionConfig>(
+    'windows',
+    CONFIG_MODULE_KEYS.windows,
+    windowsEnvSchema,
+    env,
+    issues,
+  );
+  const vps = parseOptionalSection<VpsSectionConfig>(
+    'vps',
+    CONFIG_MODULE_KEYS.vps,
+    vpsEnvSchema,
+    env,
+    issues,
+  );
+
+  if (issues.length > 0 || !appResult.success || !authResult.success) {
+    throw new ConfigError(issues);
+  }
+
+  const parsedApp = appResult.data;
+  const parsedAuth = authResult.data;
+
+  const appSection: AppSectionConfig = {
+    NODE_ENV: parsedApp.NODE_ENV,
+    PORT: parsedApp.PORT,
+    HOST: parsedApp.HOST,
+    DATABASE_URL: parsedApp.DATABASE_URL,
+    WEB_DIST_DIR: parsedApp.WEB_DIST_DIR
+      ? path.resolve(SERVER_ROOT, parsedApp.WEB_DIST_DIR)
+      : path.resolve(SERVER_ROOT, '../web/dist'),
+    COOKIE_SECURE: parsedApp.COOKIE_SECURE ?? parsedApp.NODE_ENV === 'production',
+    TRUST_PROXY: parsedApp.TRUST_PROXY,
+  };
+
+  const authSection: AuthSectionConfig = {
+    ADMIN_USERNAME: parsedAuth.ADMIN_USERNAME,
+    ADMIN_PASSWORD_HASH: parsedAuth.ADMIN_PASSWORD_HASH,
+    SESSION_SECRET: parsedAuth.SESSION_SECRET,
+    SESSION_TTL_HOURS: parsedAuth.SESSION_TTL_HOURS,
+    SESSION_TTL_SECONDS: parsedAuth.SESSION_TTL_HOURS * 3600,
+    LOGIN_MAX_ATTEMPTS: parsedAuth.LOGIN_MAX_ATTEMPTS,
+    LOGIN_LOCK_MINUTES: parsedAuth.LOGIN_LOCK_MINUTES,
+  };
+
+  return {
+    app: appSection,
+    auth: authSection,
+    nas,
+    qbittorrent,
+    moviepilot,
+    windows,
+    vps,
+    keyPresence: Object.freeze(buildKeyPresence(env)),
+  };
+}
+
+/**
+ * 加载 .env 文件并解析当前进程配置。
+ */
+export function loadConfig(): AppConfig {
+  loadEnvFiles();
+  return parseConfig(process.env);
+}

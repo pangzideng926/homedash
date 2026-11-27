@@ -1,12 +1,13 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie';
 import { z } from 'zod';
 import { verifyPassword } from './auth/password.js';
+import { getClientIp, InMemoryLoginRateLimiter, type LoginRateLimiter } from './auth/rate-limit.js';
 import { createSession, deleteSession, SESSION_COOKIE_NAME } from './auth/session.js';
-import type { AppConfig } from './config.js';
+import { getConfigStatus, type AppConfig } from './config/index.js';
 import type { AppDatabase } from './db/index.js';
 import { createAuthMiddleware, type AppVariables } from './middleware/auth.js';
 
@@ -68,19 +69,50 @@ function resolveStaticFile(distDir: string, requestPath: string): string | null 
   return null;
 }
 
+export interface CreateAppOptions {
+  rateLimiter?: LoginRateLimiter;
+  getClientIp?: (c: Context) => string;
+  now?: () => number;
+}
+
 /**
  * 创建 Hono 应用实例（与端口监听解耦，便于单元测试）。
  */
-export function createApp(config: AppConfig, db: AppDatabase): Hono<{ Variables: AppVariables }> {
+export function createApp(
+  config: AppConfig,
+  db: AppDatabase,
+  options?: CreateAppOptions,
+): Hono<{ Variables: AppVariables }> {
   const app = new Hono<{ Variables: AppVariables }>();
+  const getNow = options?.now ?? Date.now;
+  const resolveClientIp =
+    options?.getClientIp ?? ((c: Context) => getClientIp(c, config.app.TRUST_PROXY));
+  const rateLimiter =
+    options?.rateLimiter ??
+    new InMemoryLoginRateLimiter({
+      maxAttempts: config.auth.LOGIN_MAX_ATTEMPTS,
+      lockMinutes: config.auth.LOGIN_LOCK_MINUTES,
+      now: getNow,
+    });
 
-  app.use('/api/*', createAuthMiddleware(config, db));
+  app.use('/api/*', createAuthMiddleware(config, db, { now: getNow }));
 
   app.get('/api/health', (c) => {
     return c.json({ status: 'ok' });
   });
 
   app.post('/api/auth/login', async (c) => {
+    const now = getNow();
+    const clientIp = resolveClientIp(c);
+    const limitStatus = rateLimiter.check(clientIp, now);
+    if (!limitStatus.allowed) {
+      c.header('Retry-After', String(limitStatus.retryAfterSeconds));
+      return c.json(
+        { error: `登录失败次数过多，请在 ${limitStatus.remainingMinutes} 分钟后重试` },
+        429,
+      );
+    }
+
     let rawBody: unknown;
     try {
       rawBody = await c.req.json();
@@ -90,31 +122,34 @@ export function createApp(config: AppConfig, db: AppDatabase): Hono<{ Variables:
 
     const parsed = loginBodySchema.safeParse(rawBody);
     if (!parsed.success) {
+      rateLimiter.recordFailure(clientIp, now);
       return c.json({ error: '用户名或密码错误' }, 401);
     }
 
     const { username, password } = parsed.data;
-    const isUsernameValid = safeStringEqual(username, config.ADMIN_USERNAME);
-    const isPasswordValid = await verifyPassword(password, config.ADMIN_PASSWORD_HASH);
+    const isUsernameValid = safeStringEqual(username, config.auth.ADMIN_USERNAME);
+    const isPasswordValid = await verifyPassword(password, config.auth.ADMIN_PASSWORD_HASH);
 
     if (!isUsernameValid || !isPasswordValid) {
+      rateLimiter.recordFailure(clientIp, now);
       return c.json({ error: '用户名或密码错误' }, 401);
     }
 
-    const session = createSession(db, config.SESSION_TTL_SECONDS);
-    await setSignedCookie(c, SESSION_COOKIE_NAME, session.id, config.SESSION_SECRET, {
+    rateLimiter.reset(clientIp);
+    const session = createSession(db, config.auth.SESSION_TTL_SECONDS, now);
+    await setSignedCookie(c, SESSION_COOKIE_NAME, session.id, config.auth.SESSION_SECRET, {
       httpOnly: true,
       sameSite: 'Lax',
-      secure: config.COOKIE_SECURE,
+      secure: config.app.COOKIE_SECURE,
       path: '/',
-      maxAge: config.SESSION_TTL_SECONDS,
+      maxAge: config.auth.SESSION_TTL_SECONDS,
     });
 
     return c.json({ ok: true });
   });
 
   app.post('/api/auth/logout', async (c) => {
-    const sessionId = await getSignedCookie(c, config.SESSION_SECRET, SESSION_COOKIE_NAME);
+    const sessionId = await getSignedCookie(c, config.auth.SESSION_SECRET, SESSION_COOKIE_NAME);
     if (sessionId) {
       deleteSession(db, sessionId);
     }
@@ -122,7 +157,7 @@ export function createApp(config: AppConfig, db: AppDatabase): Hono<{ Variables:
     deleteCookie(c, SESSION_COOKIE_NAME, {
       httpOnly: true,
       sameSite: 'Lax',
-      secure: config.COOKIE_SECURE,
+      secure: config.app.COOKIE_SECURE,
       path: '/',
     });
 
@@ -130,15 +165,22 @@ export function createApp(config: AppConfig, db: AppDatabase): Hono<{ Variables:
   });
 
   app.get('/api/auth/me', (c) => {
-    return c.json({ username: c.get('username') });
+    return c.json({
+      username: c.get('username'),
+      expiresAt: c.get('sessionExpiresAt').toISOString(),
+    });
+  });
+
+  app.get('/api/settings/status', (c) => {
+    return c.json(getConfigStatus(config));
   });
 
   app.all('/api/*', (c) => {
     return c.json({ error: '接口不存在' }, 404);
   });
 
-  if (config.NODE_ENV === 'production') {
-    const distDir = path.resolve(config.WEB_DIST_DIR);
+  if (config.app.NODE_ENV === 'production') {
+    const distDir = path.resolve(config.app.WEB_DIST_DIR);
     const indexHtmlPath = path.join(distDir, 'index.html');
 
     app.get('*', (c) => {

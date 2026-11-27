@@ -10,6 +10,7 @@ export class ApiError extends Error {
 
 export interface AuthUser {
   username: string;
+  expiresAt?: string;
 }
 
 export async function fetchCurrentUser(): Promise<AuthUser | null> {
@@ -31,7 +32,10 @@ export async function fetchCurrentUser(): Promise<AuthUser | null> {
     return null;
   }
 
-  return { username: data.username };
+  return {
+    username: data.username,
+    ...(typeof data.expiresAt === 'string' ? { expiresAt: data.expiresAt } : {}),
+  };
 }
 
 export async function loginRequest(username: string, password: string): Promise<void> {

@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "secrets:scan": "if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --config .gitleaks.toml --verbose; else echo '未检测到 gitleaks，已跳过本地密钥扫描（可安装 gitleaks 后重试，CI 中仍会自动扫描）'; fi"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
