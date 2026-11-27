@@ -39,6 +39,7 @@ describe('配置分组校验与状态报告', () => {
     expect(prodConfig.nas).toBeUndefined();
     expect(prodConfig.qbittorrent).toBeUndefined();
     expect(prodConfig.moviepilot).toBeUndefined();
+    expect(prodConfig.devices).toBeUndefined();
     expect(prodConfig.windows).toBeUndefined();
     expect(prodConfig.vps).toBeUndefined();
 
@@ -132,7 +133,9 @@ describe('配置分组校验与状态报告', () => {
     expect(minimalStatus.modules.nas.statusLabel).toBe('未配置');
     expect(minimalStatus.modules.qbittorrent.status).toBe('unconfigured');
     expect(minimalStatus.modules.moviepilot.status).toBe('unconfigured');
+    expect(minimalStatus.modules.devices.status).toBe('unconfigured');
     expect(minimalStatus.modules.windows.status).toBe('unconfigured');
+    expect(minimalStatus.modules.windows.label).toContain('旧版兼容');
     expect(minimalStatus.modules.vps.status).toBe('unconfigured');
 
     const fullEnv = {
@@ -150,6 +153,7 @@ describe('配置分组校验与状态报告', () => {
       WIN_SSH_PORT: '22',
       WIN_SSH_USER: 'winuser',
       WIN_SSH_KEY_PATH: './secrets/test-win-key',
+      DEVICES_FILE: './secrets/devices.json',
       VPS_LIST_FILE: './secrets/vps.json',
     };
 
@@ -157,6 +161,10 @@ describe('配置分组校验与状态报告', () => {
     expect(fullConfig.nas?.NAS_SSH_PORT).toBe(22);
     expect(fullConfig.qbittorrent?.QBIT_URL).toBe('http://192.0.2.10:8080');
     expect(fullConfig.moviepilot?.MOVIEPILOT_URL).toBe('https://mp.example.com');
+    expect(fullConfig.devices?.DEVICES_FILE).toBe('./secrets/devices.json');
+    expect(fullConfig.devices?.DEVICE_SSH_TIMEOUT_MS).toBe(8000);
+    expect(fullConfig.devices?.DEVICE_CACHE_SECONDS).toBe(30);
+    expect(fullConfig.devices?.DEVICES_MOCK).toBe(false);
     expect(fullConfig.windows?.WIN_SSH_PORT).toBe(22);
     expect(fullConfig.windows?.WIN_SSH_TIMEOUT_MS).toBe(8000);
     expect(fullConfig.windows?.WIN_CACHE_SECONDS).toBe(30);
@@ -168,6 +176,7 @@ describe('配置分组校验与状态报告', () => {
     expect(fullStatus.modules.nas.status).toBe('configured');
     expect(fullStatus.modules.qbittorrent.status).toBe('configured');
     expect(fullStatus.modules.moviepilot.status).toBe('configured');
+    expect(fullStatus.modules.devices.status).toBe('configured');
     expect(fullStatus.modules.windows.status).toBe('configured');
     expect(fullStatus.modules.vps.status).toBe('configured');
 

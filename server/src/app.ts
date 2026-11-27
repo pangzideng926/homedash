@@ -10,8 +10,9 @@ import { createSession, deleteSession, SESSION_COOKIE_NAME } from './auth/sessio
 import { getConfigStatus, type AppConfig, type SafeLogger } from './config/index.js';
 import type { AppDatabase } from './db/index.js';
 import { createAuthMiddleware, type AppVariables } from './middleware/auth.js';
+import { createDevicesService, type SshCommandExecutor } from './devices/index.js';
 import { readVpsList, saveVpsList } from './vps/service.js';
-import { createWindowsStatusService, type WindowsCommandExecutor } from './windows/index.js';
+import type { WindowsCommandExecutor } from './windows/index.js';
 
 const loginBodySchema = z.object({
   username: z.string(),
@@ -75,6 +76,8 @@ export interface CreateAppOptions {
   rateLimiter?: LoginRateLimiter;
   getClientIp?: (c: Context) => string;
   now?: () => number;
+  sshExecutor?: SshCommandExecutor;
+  readPrivateKey?: (keyPath: string) => Promise<string | Buffer>;
   windowsExecutor?: WindowsCommandExecutor;
   readWindowsPrivateKey?: (keyPath: string) => Promise<string | Buffer>;
   logger?: SafeLogger;
@@ -99,9 +102,9 @@ export function createApp(
       lockMinutes: config.auth.LOGIN_LOCK_MINUTES,
       now: getNow,
     });
-  const windowsService = createWindowsStatusService(config, {
-    executor: options?.windowsExecutor,
-    readPrivateKey: options?.readWindowsPrivateKey,
+  const devicesService = createDevicesService(config, {
+    executor: options?.sshExecutor ?? options?.windowsExecutor,
+    readPrivateKey: options?.readPrivateKey ?? options?.readWindowsPrivateKey,
     now: getNow,
     logger: options?.logger,
   });
@@ -212,10 +215,77 @@ export function createApp(
     return c.json(result.data);
   });
 
+  app.get('/api/devices', (c) => {
+    return c.json(devicesService.getDevices());
+  });
+
+  app.put('/api/devices', async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: '请求体 JSON 格式错误' }, 400);
+    }
+
+    const result = devicesService.saveDevices(rawBody);
+    if (!result.ok) {
+      return c.json(
+        {
+          error: result.error,
+          ...(result.details ? { details: result.details } : {}),
+        },
+        result.status,
+      );
+    }
+
+    return c.json(result.data);
+  });
+
+  app.get('/api/devices/status', async (c) => {
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    const result = await devicesService.getAllStatuses({ refresh });
+    return c.json(result);
+  });
+
+  app.get('/api/devices/:id/status', async (c) => {
+    const id = c.req.param('id');
+    const refreshParam = c.req.query('refresh');
+    const refresh = refreshParam === '1' || refreshParam === 'true';
+    const result = await devicesService.getDeviceStatus(id, { refresh });
+    if (!result.found) {
+      return c.json({ error: '未找到指定设备' }, 404);
+    }
+    return c.json(result.data);
+  });
+
+  app.post('/api/devices/test', async (c) => {
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json({ error: '请求体 JSON 格式错误' }, 400);
+    }
+
+    const result = await devicesService.testConnection(rawBody);
+    if (!result.ok) {
+      return c.json(
+        {
+          error: result.error,
+          ...(result.details ? { details: result.details } : {}),
+        },
+        result.status,
+      );
+    }
+
+    return c.json(result.data);
+  });
+
+  // 兼容旧版 /api/windows/status，返回第一台启用 Windows 设备的状态
   app.get('/api/windows/status', async (c) => {
     const refreshParam = c.req.query('refresh');
     const refresh = refreshParam === '1' || refreshParam === 'true';
-    const result = await windowsService.getStatus({ refresh });
+    const result = await devicesService.getLegacyWindowsStatus({ refresh });
     return c.json(result);
   });
 

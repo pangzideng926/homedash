@@ -14,6 +14,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const OverviewPage = lazy(() => import('@/pages/OverviewPage'));
 const NasPage = lazy(() => import('@/pages/NasPage'));
 const SeedingPage = lazy(() => import('@/pages/SeedingPage'));
+const DevicesPage = lazy(() => import('@/pages/DevicesPage'));
 const PcPage = lazy(() => import('@/pages/PcPage'));
 const VpsPage = lazy(() => import('@/pages/VpsPage'));
 const AlertsPage = lazy(() => import('@/pages/AlertsPage'));
@@ -57,11 +58,18 @@ export const NAV_ROUTES: NavRouteItem[] = [
         component: SeedingPage,
       },
       {
-        id: 'pc',
-        path: '/pc',
-        title: '家用电脑',
-        description: '家用 Windows 主机状态与资源监控',
+        id: 'devices',
+        path: '/devices',
+        title: '家用设备',
+        description: '家用 Windows / macOS / Linux 主机状态与资源监控',
         icon: Monitor,
+        component: DevicesPage,
+      },
+      {
+        id: 'pc-redirect',
+        path: '/pc',
+        title: '家用设备',
+        hiddenInMenu: true,
         component: PcPage,
       },
       {

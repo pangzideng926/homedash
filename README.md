@@ -1,12 +1,12 @@
 # homedash
 
-家庭服务器控制台：把家里 NAS、刷流做种、家用电脑、VPS 和各类账号告警集中到一个网页里查看。同时也是一套可复用的通用后台模板骨架。
+家庭服务器控制台：把家里 NAS、刷流做种、家用设备（Windows / macOS / Linux）、VPS 和各类账号告警集中到一个网页里查看。同时也是一套可复用的通用后台模板骨架。
 
 ## 规划功能
 
 - NAS 状态与磁盘用量
 - qBittorrent / MoviePilot 刷流与做种数据
-- 家用 Windows 机器状态（SSH 采集）
+- 家用设备状态（多设备 SSH 只读采集，支持 Windows / macOS / Linux，界面增删改与连通性测试）
 - VPS 到期提醒
 - 账号登录与安全告警汇总
 - 通用后台骨架：布局、路由、登录鉴权
@@ -50,6 +50,7 @@ homedash/
 │   ├── vite.config.ts         # Vite 与 /api 开发代理配置
 │   └── package.json
 ├── .env.example               # 环境变量模板
+├── devices.example.json       # 家用设备清单 JSON 示例文件（全部为占位数据）
 ├── vps.example.json           # VPS 清单 JSON 示例文件（全部为占位数据）
 ├── .dockerignore              # Docker 构建上下文忽略规则
 ├── Dockerfile                 # 多阶段单镜像构建文件
@@ -154,18 +155,25 @@ pnpm secrets:scan  # 运行本地密钥扫描（需本机安装 gitleaks；未�
 
 #### 3. 可选采集模块（全部未填时视为“未配置”；同一模块不可部分填写）
 
-| 模块          | 环境变量                                                                                                                  | 说明                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`                                                        | NAS SSH 采集连接参数与私钥路径                                                                                    |
-| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`                                                                              | qBittorrent WebUI 地址与凭据                                                                                      |
-| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`                                                                                  | MoviePilot 服务地址与 API 令牌                                                                                    |
-| `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH`、`WIN_SSH_TIMEOUT_MS`、`WIN_CACHE_SECONDS`、`WIN_MOCK` | 家用 Windows 主机只读 SSH 采集参数与超时/缓存/模拟开关；`WIN_MOCK=true` 时视为已配置并直接返回 `DEMO-PC` 模拟数据 |
-| `vps`         | `VPS_LIST_FILE`、`VPS_READONLY`                                                                                           | 本地 VPS 信息 JSON 文件路径与只读模式开关（`VPS_READONLY=true` 时禁止页面编辑与 `PUT /api/vps` 写入）             |
+| 模块          | 环境变量                                                                                                                  | 说明                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `nas`         | `NAS_SSH_HOST`、`NAS_SSH_PORT`、`NAS_SSH_USER`、`NAS_SSH_KEY_PATH`                                                        | NAS SSH 采集连接参数与私钥路径                                                                                       |
+| `qbittorrent` | `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`                                                                              | qBittorrent WebUI 地址与凭据                                                                                         |
+| `moviepilot`  | `MOVIEPILOT_URL`、`MOVIEPILOT_API_TOKEN`                                                                                  | MoviePilot 服务地址与 API 令牌                                                                                       |
+| `devices`     | `DEVICES_FILE`、`DEVICES_READONLY`、`DEVICES_MOCK`、`DEVICE_SSH_TIMEOUT_MS`、`DEVICE_CACHE_SECONDS`                       | 多设备家用主机（Windows / macOS / Linux）清单与只读 SSH 采集参数；`DEVICES_MOCK=true` 返回模拟 Windows 与 macOS 设备 |
+| `windows`     | `WIN_SSH_HOST`、`WIN_SSH_PORT`、`WIN_SSH_USER`、`WIN_SSH_KEY_PATH`、`WIN_SSH_TIMEOUT_MS`、`WIN_CACHE_SECONDS`、`WIN_MOCK` | 旧版兼容：未配置 `DEVICES_FILE` 时自动迁移为只读“Windows 设备”；`WIN_MOCK=true` 兼容等效于 `DEVICES_MOCK=true`       |
+| `vps`         | `VPS_LIST_FILE`、`VPS_READONLY`                                                                                           | 本地 VPS 信息 JSON 文件路径与只读模式开关（`VPS_READONLY=true` 时禁止页面编辑与 `PUT /api/vps` 写入）                |
 
-#### 4. VPS 清单文件与 Windows 只读采集说明
+#### 4. 家用设备（`devices`）、macOS SSH 与 VPS 清单说明
 
+- **家用设备清单（`DEVICES_FILE`）**：可参考仓库根目录的 [`devices.example.json`](./devices.example.json) 复制为本地文件（如 `./secrets/devices.json`），格式为 `{"devices":[{"id","name","host","port","user","keyPath","os","enabled","note"}]}`，支持 `auto` / `windows` / `macos` / `linux`。在网页中编辑保存（`PUT /api/devices`）时，服务端先生成同目录 `.bak` 备份并通过临时文件原子替换；`DEVICES_READONLY=true` 时禁止编辑。**接口与界面绝不读取、上传或展示私钥内容**，仅保存服务器上私钥文件的路径 `keyPath`。
+- **旧版兼容与路由说明**：未配置 `DEVICES_FILE` 但配置了 `WIN_SSH_*` 时，系统会自动生成一台只读虚拟设备（`legacy-windows`），界面会提示配置 `DEVICES_FILE` 后可编辑；旧接口 `/api/windows/status` 保留为兼容别名（返回第一台启用 Windows 设备状态），旧前端路由 `/pc` 自动重定向到 `/devices`。
+- **各系统只读采集脚本**：后端通过纯 JS `ssh2` 连接目标主机，当 `os=auto` 时先执行只读 `uname -s` 判定 `Darwin`（`macos`）或 `Linux`（`linux`），若非 Unix 再执行只读 PowerShell 版本探测判定 `windows`（识别结果按设备缓存 10 分钟）。随后按系统执行固定只读脚本（Windows `Get-CimInstance`、macOS `sysctl`/`sw_vers`/`vm_stat`/`top`/`df -k`、Linux `/proc/*` 与 `df -kP`），**绝不包含任何重启、关机、写文件、安装或修改远端状态的命令**。
+- **macOS SSH 配置建议**：
+  1. 在目标 Mac 上打开：**系统设置 → 通用 → 共享 → 远程登录**（开启 SSH 服务，建议仅允许指定用户）。
+  2. 为降低风险，建议在目标主机的 `~/.ssh/authorized_keys` 中为专用的只读采集公钥增加来源 IP 与命令限制，例如：`from="192.0.2.10",restrict ssh-ed25519 AAAA... demo@homedash`（按需结合仅允许连接与只读命令场景配置）。
+  3. 若 Mac 局域网 IP 可能变化，建议在路由器中为该 Mac 配置静态 DHCP 地址绑定，或在设备 `host` 中填写 mDNS `.local` 主机名（如 `demo-mac.local`）。
 - **VPS 清单文件（`VPS_LIST_FILE`）**：可参考仓库根目录的 [`vps.example.json`](./vps.example.json) 复制为本地文件（如 `./secrets/vps.json`）。`name` 与 `expiresAt`（`YYYY-MM-DD`）为必填字段，`id`、`provider`、`price`、`currency`、`renewUrl`、`note` 均可选/可空。通过网页编辑保存时，服务端会在写入前生成同目录 `.bak` 备份并执行临时文件原子替换。
-- **家用 Windows 只读采集（`windows`）**：后端通过 `ssh2`（纯 JS 实现，适合 Docker 部署）连接 Windows OpenSSH（默认 shell 为 PowerShell），仅执行固定的 `Get-CimInstance` 只读查询命令（通过 `-EncodedCommand` 传递），**绝不包含任何重启、关机、安装或修改远端状态的命令**。开发/演示环境可设置 `WIN_MOCK=true` 跳过 SSH 直接返回模拟数据。
 
 ### 校验失败报错与安全脱敏
 

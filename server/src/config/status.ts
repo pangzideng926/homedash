@@ -87,6 +87,14 @@ function resolveOptionalModuleStatus(
     return presence.VPS_LIST_FILE ? 'configured' : 'unconfigured';
   }
 
+  if (moduleId === 'devices') {
+    const isMockEnabled = isAppConfig(source)
+      ? Boolean(source.devices?.DEVICES_MOCK)
+      : isEnvTruthy((source ?? process.env).DEVICES_MOCK);
+
+    return presence.DEVICES_FILE || isMockEnabled ? 'configured' : 'unconfigured';
+  }
+
   if (moduleId === 'windows') {
     const isMockEnabled = isAppConfig(source)
       ? Boolean(source.windows?.WIN_MOCK)

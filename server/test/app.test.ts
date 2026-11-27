@@ -320,6 +320,7 @@ describe('认证、会话过期、限流与配置状态接口', () => {
     expect(payload.modules.qbittorrent.keys.QBIT_PASSWORD).toBe(true);
     expect(payload.modules.moviepilot.status).toBe('configured');
     expect(payload.modules.nas.status).toBe('unconfigured');
+    expect(payload.modules.devices.status).toBe('unconfigured');
     expect(payload.modules.windows.status).toBe('unconfigured');
     expect(payload.modules.vps.status).toBe('unconfigured');
 

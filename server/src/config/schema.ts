@@ -13,6 +13,7 @@ import {
   type AuthSectionConfig,
   type ConfigKey,
   type ConfigModuleName,
+  type DevicesSectionConfig,
   type MoviepilotSectionConfig,
   type NasSectionConfig,
   type QbittorrentSectionConfig,
@@ -245,6 +246,9 @@ const windowsSshEnvSchema = z.object({
 
 const windowsTimeoutSchema = positiveIntSchema('Windows SSH 超时时间（毫秒）');
 const windowsCacheSecondsSchema = nonNegativeIntSchema('Windows 状态缓存时间（秒）');
+const devicesFileSchema = nonEmptyStringSchema('设备清单文件路径');
+const deviceTimeoutSchema = positiveIntSchema('家用设备 SSH 超时时间（毫秒）');
+const deviceCacheSecondsSchema = nonNegativeIntSchema('家用设备状态缓存时间（秒）');
 const vpsFileSchema = nonEmptyStringSchema('VPS 清单文件路径');
 
 function parseSingleKey<T>(
@@ -304,6 +308,90 @@ function parseVpsSection(
   return {
     VPS_LIST_FILE: fileRes.data,
     VPS_READONLY: readonlyRes.value,
+  };
+}
+
+function parseDevicesSection(
+  env: Record<string, string | undefined>,
+  issues: ConfigIssue[],
+): DevicesSectionConfig | undefined {
+  const readonlyRes = parseSingleKey(
+    'devices',
+    'DEVICES_READONLY',
+    booleanStringSchema,
+    env.DEVICES_READONLY,
+    false,
+    issues,
+  );
+  const mockRes = parseSingleKey(
+    'devices',
+    'DEVICES_MOCK',
+    booleanStringSchema,
+    env.DEVICES_MOCK,
+    false,
+    issues,
+  );
+
+  // 若未填 DEVICE_* 但填了合法的 WIN_* 参数，作为兼容回退默认值
+  const fallbackTimeout =
+    isEnvValueFilled(env.WIN_SSH_TIMEOUT_MS) &&
+    deviceTimeoutSchema.safeParse(env.WIN_SSH_TIMEOUT_MS).success
+      ? deviceTimeoutSchema.parse(env.WIN_SSH_TIMEOUT_MS)
+      : 8000;
+  const fallbackCacheSeconds =
+    isEnvValueFilled(env.WIN_CACHE_SECONDS) &&
+    deviceCacheSecondsSchema.safeParse(env.WIN_CACHE_SECONDS).success
+      ? deviceCacheSecondsSchema.parse(env.WIN_CACHE_SECONDS)
+      : 30;
+
+  const timeoutRes = parseSingleKey(
+    'devices',
+    'DEVICE_SSH_TIMEOUT_MS',
+    deviceTimeoutSchema,
+    env.DEVICE_SSH_TIMEOUT_MS,
+    fallbackTimeout,
+    issues,
+  );
+  const cacheRes = parseSingleKey(
+    'devices',
+    'DEVICE_CACHE_SECONDS',
+    deviceCacheSecondsSchema,
+    env.DEVICE_CACHE_SECONDS,
+    fallbackCacheSeconds,
+    issues,
+  );
+
+  const hasFile = isEnvValueFilled(env.DEVICES_FILE);
+  const isMock = mockRes.ok && mockRes.value;
+
+  if (!hasFile && !isMock) {
+    return undefined;
+  }
+
+  let filePath: string | undefined;
+  if (hasFile) {
+    const fileRes = devicesFileSchema.safeParse(env.DEVICES_FILE);
+    if (!fileRes.success) {
+      issues.push({
+        module: 'devices',
+        key: 'DEVICES_FILE',
+        reason: fileRes.error.issues[0]?.message || '配置格式无效',
+      });
+      return undefined;
+    }
+    filePath = fileRes.data;
+  }
+
+  if (!readonlyRes.ok || !mockRes.ok || !timeoutRes.ok || !cacheRes.ok) {
+    return undefined;
+  }
+
+  return {
+    ...(filePath ? { DEVICES_FILE: filePath } : {}),
+    DEVICES_READONLY: readonlyRes.value,
+    DEVICES_MOCK: mockRes.value,
+    DEVICE_SSH_TIMEOUT_MS: timeoutRes.value,
+    DEVICE_CACHE_SECONDS: cacheRes.value,
   };
 }
 
@@ -540,6 +628,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     env,
     issues,
   );
+  const devices = parseDevicesSection(env, issues);
   const windows = parseWindowsSection(env, issues);
   const vps = parseVpsSection(env, issues);
 
@@ -579,6 +668,7 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     nas,
     qbittorrent,
     moviepilot,
+    devices,
     windows,
     vps,
     keyPresence: Object.freeze(buildKeyPresence(env)),

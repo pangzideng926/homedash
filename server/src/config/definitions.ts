@@ -4,6 +4,7 @@ export const CONFIG_MODULE_NAMES = [
   'nas',
   'qbittorrent',
   'moviepilot',
+  'devices',
   'windows',
   'vps',
 ] as const;
@@ -14,6 +15,7 @@ export const OPTIONAL_CONFIG_MODULES = [
   'nas',
   'qbittorrent',
   'moviepilot',
+  'devices',
   'windows',
   'vps',
 ] as const;
@@ -26,7 +28,8 @@ export const CONFIG_MODULE_LABELS: Readonly<Record<ConfigModuleName, string>> = 
   nas: 'NAS',
   qbittorrent: 'qBittorrent',
   moviepilot: 'MoviePilot',
-  windows: '家用 Windows 主机',
+  devices: '家用设备',
+  windows: '家用 Windows 主机（旧版兼容）',
   vps: 'VPS',
 };
 
@@ -52,6 +55,13 @@ export const CONFIG_MODULE_KEYS = {
   nas: ['NAS_SSH_HOST', 'NAS_SSH_PORT', 'NAS_SSH_USER', 'NAS_SSH_KEY_PATH'],
   qbittorrent: ['QBIT_URL', 'QBIT_USERNAME', 'QBIT_PASSWORD'],
   moviepilot: ['MOVIEPILOT_URL', 'MOVIEPILOT_API_TOKEN'],
+  devices: [
+    'DEVICES_FILE',
+    'DEVICES_READONLY',
+    'DEVICES_MOCK',
+    'DEVICE_SSH_TIMEOUT_MS',
+    'DEVICE_CACHE_SECONDS',
+  ],
   windows: [
     'WIN_SSH_HOST',
     'WIN_SSH_PORT',
@@ -142,6 +152,14 @@ export interface MoviepilotSectionConfig {
   MOVIEPILOT_API_TOKEN: string;
 }
 
+export interface DevicesSectionConfig {
+  DEVICES_FILE?: string;
+  DEVICES_READONLY: boolean;
+  DEVICES_MOCK: boolean;
+  DEVICE_SSH_TIMEOUT_MS: number;
+  DEVICE_CACHE_SECONDS: number;
+}
+
 export interface WindowsSectionConfig {
   WIN_SSH_HOST?: string;
   WIN_SSH_PORT?: number;
@@ -163,6 +181,7 @@ export interface AppConfig {
   nas?: NasSectionConfig;
   qbittorrent?: QbittorrentSectionConfig;
   moviepilot?: MoviepilotSectionConfig;
+  devices?: DevicesSectionConfig;
   windows?: WindowsSectionConfig;
   vps?: VpsSectionConfig;
   /** 仅记录环境变量键是否已填写（布尔值），绝不保存任何原始值 */

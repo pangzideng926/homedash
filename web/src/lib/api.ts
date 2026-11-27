@@ -381,3 +381,181 @@ export async function fetchWindowsStatus(options?: {
     fallbackErrorMessage: '获取家用电脑状态失败，请稍后重试',
   });
 }
+
+export type DeviceOsConfig = 'auto' | 'windows' | 'macos' | 'linux';
+export type TargetDeviceOs = 'windows' | 'macos' | 'linux';
+export type DetectedOs = TargetDeviceOs | 'unknown';
+export type DeviceSource = 'file' | 'legacy-windows' | 'mock' | 'unconfigured';
+
+export type DeviceFileErrorCode =
+  'UNCONFIGURED' | 'FILE_NOT_FOUND' | 'READ_ERROR' | 'INVALID_JSON' | 'INVALID_FORMAT';
+
+export type DeviceErrorCode =
+  | 'UNCONFIGURED'
+  | 'KEY_FILE_ERROR'
+  | 'TIMEOUT'
+  | 'AUTH_FAILED'
+  | 'CONNECTION_FAILED'
+  | 'OS_DETECT_FAILED'
+  | 'COMMAND_FAILED'
+  | 'PARSE_FAILED';
+
+export interface DeviceRecord {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  keyPath: string;
+  os: DeviceOsConfig;
+  enabled: boolean;
+  note: string | null;
+}
+
+export interface DeviceInput {
+  id?: string;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  keyPath: string;
+  os: DeviceOsConfig;
+  enabled: boolean;
+  note?: string | null;
+}
+
+export interface DeviceListResponse {
+  configured: boolean;
+  source: DeviceSource;
+  readonly: boolean;
+  readonlyReason?: string;
+  devices: DeviceRecord[];
+  errorCode?: DeviceFileErrorCode;
+  error?: string;
+}
+
+export interface DeviceCpuInfo {
+  model: string;
+  cores: number;
+  loadPercent: number;
+}
+
+export interface DeviceMemoryInfo {
+  totalBytes: number;
+  usedBytes: number;
+  usedPercent: number;
+}
+
+export interface DeviceDiskInfo {
+  mount: string;
+  label: string;
+  totalBytes: number;
+  freeBytes: number;
+  usedPercent: number;
+}
+
+export interface DeviceStatusData {
+  hostname: string;
+  os: TargetDeviceOs;
+  osVersion: string;
+  bootTime: string;
+  uptimeSeconds: number;
+  cpu: DeviceCpuInfo;
+  memory: DeviceMemoryInfo;
+  disks: DeviceDiskInfo[];
+}
+
+export interface DeviceStatusItem {
+  id: string;
+  name: string;
+  os: DetectedOs;
+  online: boolean;
+  checkedAt: string;
+  cached: boolean;
+  errorCode?: DeviceErrorCode;
+  error?: string;
+  data?: DeviceStatusData;
+}
+
+export interface DevicesStatusSummary {
+  total: number;
+  online: number;
+  offline: number;
+}
+
+export interface DevicesStatusResponse {
+  configured: boolean;
+  source: DeviceSource;
+  readonly: boolean;
+  readonlyReason?: string;
+  checkedAt: string;
+  devices: DeviceStatusItem[];
+  summary: DevicesStatusSummary;
+  errorCode?: DeviceFileErrorCode;
+  error?: string;
+}
+
+export interface DeviceTestInput {
+  name?: string;
+  host: string;
+  port: number;
+  user: string;
+  keyPath: string;
+  os: DeviceOsConfig;
+}
+
+export interface DeviceTestResponse {
+  ok: boolean;
+  os?: DetectedOs;
+  durationMs: number;
+  errorCode?: DeviceErrorCode;
+  error?: string;
+}
+
+export async function fetchDevicesList(signal?: AbortSignal): Promise<DeviceListResponse> {
+  return apiRequest<DeviceListResponse>('/api/devices', {
+    method: 'GET',
+    ...(signal ? { signal } : {}),
+    fallbackErrorMessage: '获取家用设备列表失败，请稍后重试',
+  });
+}
+
+export async function saveDevicesList(devices: DeviceInput[]): Promise<DeviceListResponse> {
+  return apiRequest<DeviceListResponse>('/api/devices', {
+    method: 'PUT',
+    body: { devices },
+    fallbackErrorMessage: '保存家用设备列表失败，请稍后重试',
+  });
+}
+
+export async function fetchDevicesStatus(options?: {
+  refresh?: boolean;
+  signal?: AbortSignal;
+}): Promise<DevicesStatusResponse> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<DevicesStatusResponse>(`/api/devices/status${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '获取家用设备状态失败，请稍后重试',
+  });
+}
+
+export async function fetchDeviceStatus(
+  id: string,
+  options?: { refresh?: boolean; signal?: AbortSignal },
+): Promise<DeviceStatusItem> {
+  const query = options?.refresh ? '?refresh=1' : '';
+  return apiRequest<DeviceStatusItem>(`/api/devices/${encodeURIComponent(id)}/status${query}`, {
+    method: 'GET',
+    ...(options?.signal ? { signal: options.signal } : {}),
+    fallbackErrorMessage: '刷新设备状态失败，请稍后重试',
+  });
+}
+
+export async function testDeviceConnection(payload: DeviceTestInput): Promise<DeviceTestResponse> {
+  return apiRequest<DeviceTestResponse>('/api/devices/test', {
+    method: 'POST',
+    body: payload,
+    fallbackErrorMessage: '连接测试失败，请稍后重试',
+  });
+}

@@ -271,20 +271,42 @@ describe('homedash 前端认证与控制台', () => {
           ],
         });
       }
-      if (url.startsWith('/api/windows/status')) {
+      if (url.startsWith('/api/devices/status')) {
         return jsonResponse({
-          online: true,
+          configured: true,
+          source: 'mock',
+          readonly: true,
           checkedAt: '2026-11-27T08:00:00.000Z',
-          cached: false,
-          data: {
-            hostname: 'DEMO-PC',
-            os: 'Windows 11',
-            bootTime: '2026-11-24T00:00:00.000Z',
-            uptimeSeconds: 10000,
-            cpu: { model: 'Demo CPU', loadPercent: 25 },
-            memory: { totalBytes: 100, freeBytes: 50, usedPercent: 50 },
-            disks: [],
-          },
+          summary: { total: 2, online: 1, offline: 1 },
+          devices: [
+            {
+              id: 'demo-win',
+              name: '客厅主机',
+              os: 'windows',
+              online: true,
+              checkedAt: '2026-11-27T08:00:00.000Z',
+              cached: false,
+              data: {
+                hostname: 'DEMO-PC',
+                os: 'windows',
+                osVersion: 'Windows 11',
+                bootTime: '2026-11-24T00:00:00.000Z',
+                uptimeSeconds: 10000,
+                cpu: { model: 'Demo CPU', cores: 8, loadPercent: 25 },
+                memory: { totalBytes: 100, usedBytes: 50, usedPercent: 50 },
+                disks: [],
+              },
+            },
+            {
+              id: 'demo-mac',
+              name: '书房 Mac',
+              os: 'macos',
+              online: false,
+              checkedAt: '2026-11-27T08:00:00.000Z',
+              cached: false,
+              error: '连接超时',
+            },
+          ],
         });
       }
       return jsonResponse({ error: '接口不存在' }, 404);
@@ -305,10 +327,13 @@ describe('homedash 前端认证与控制台', () => {
     expect(screen.getByText('admin')).toBeInTheDocument();
     expect(screen.getByText('NAS 状态')).toBeInTheDocument();
     expect(screen.getByText('做种概况')).toBeInTheDocument();
-    expect(screen.getByText('家用电脑', { selector: 'h3' })).toBeInTheDocument();
+    expect(screen.getByText('家用设备', { selector: 'h3' })).toBeInTheDocument();
     expect(screen.getByText('VPS 到期')).toBeInTheDocument();
     expect(screen.getByText('最近告警')).toBeInTheDocument();
-    expect(await screen.findByText('CPU 25%')).toBeInTheDocument();
+    expect(await screen.findByText('1 / 2 在线')).toBeInTheDocument();
+    expect(screen.getByText('客厅主机')).toBeInTheDocument();
+    expect(screen.getByText('书房 Mac')).toBeInTheDocument();
+    expect(screen.getByText(/CPU 25% · 内存 50%/)).toBeInTheDocument();
     expect(await screen.findByText('2 台')).toBeInTheDocument();
     expect(screen.getByText(/最近到期：香港节点/)).toBeInTheDocument();
     expect(screen.getAllByText('暂无数据')).toHaveLength(3);
@@ -343,5 +368,50 @@ describe('homedash 前端认证与控制台', () => {
     expect(await screen.findByText('404')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '页面未找到' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
+  });
+
+  it('旧路由 /pc 自动重定向到 /devices', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/auth/me')) {
+        return jsonResponse({
+          username: 'admin',
+          expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        });
+      }
+      if (url === '/api/devices') {
+        return jsonResponse({
+          configured: false,
+          source: 'unconfigured',
+          readonly: false,
+          devices: [],
+          errorCode: 'UNCONFIGURED',
+          error: '尚未配置家用设备',
+        });
+      }
+      if (url.startsWith('/api/devices/status')) {
+        return jsonResponse({
+          configured: false,
+          source: 'unconfigured',
+          readonly: false,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          devices: [],
+          summary: { total: 0, online: 0, offline: 0 },
+          errorCode: 'UNCONFIGURED',
+          error: '尚未配置家用设备',
+        });
+      }
+      return jsonResponse({ error: '接口不存在' }, 404);
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/pc']}>
+        <AppRoutes />
+        <LocationDisplay />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { name: '家用设备' })).toBeInTheDocument();
+    expect(screen.getByTestId('location-display')).toHaveTextContent('/devices');
   });
 });
