@@ -1,13 +1,25 @@
 /**
+ * 将 PowerShell 脚本编码为 UTF-16LE Base64，供 -EncodedCommand 参数安全传递，
+ * 避免引号转义以及 Windows OpenSSH 默认 shell 为 PowerShell 时双引号内变量提前展开的问题。
+ */
+export function encodePowerShellCommand(script: string): string {
+  return Buffer.from(script, 'utf16le').toString('base64');
+}
+
+/**
  * Unix 系统只读识别命令（仅调用 uname -s 查询内核名称，绝对只读）。
  */
 export const UNIX_OS_PROBE_COMMAND = 'uname -s';
 
 /**
- * Windows PowerShell 只读识别命令（仅读取 $PSVersionTable.PSVersion.Major，绝对只读）。
+ * Windows PowerShell 只读识别脚本（仅读取 $PSVersionTable.PSVersion.Major，绝对只读）。
  */
-export const WINDOWS_OS_PROBE_COMMAND =
-  'powershell -NoProfile -NonInteractive -Command "$PSVersionTable.PSVersion.Major"';
+export const WINDOWS_OS_PROBE_SCRIPT = '$PSVersionTable.PSVersion.Major';
+
+/**
+ * 固定的只读 Windows PowerShell 系统识别命令常量（通过 -EncodedCommand 执行，避免外层 PowerShell 展开 $PSVersionTable）。
+ */
+export const WINDOWS_OS_PROBE_COMMAND = `powershell -NoProfile -NonInteractive -EncodedCommand ${encodePowerShellCommand(WINDOWS_OS_PROBE_SCRIPT)}`;
 
 /**
  * Windows 只读状态采集脚本（严格只读）：
@@ -62,13 +74,6 @@ export const WINDOWS_READONLY_STATUS_SCRIPT = [
   '}',
   '$result | ConvertTo-Json -Depth 4 -Compress',
 ].join('\n');
-
-/**
- * 将 PowerShell 脚本编码为 UTF-16LE Base64，供 -EncodedCommand 参数安全传递，避免引号转义问题。
- */
-export function encodePowerShellCommand(script: string): string {
-  return Buffer.from(script, 'utf16le').toString('base64');
-}
 
 /**
  * 固定的只读 Windows 状态采集命令常量（通过 -EncodedCommand 执行）。

@@ -19,6 +19,7 @@ import {
   SshCollectorError,
   UNIX_OS_PROBE_COMMAND,
   WINDOWS_OS_PROBE_COMMAND,
+  WINDOWS_OS_PROBE_SCRIPT,
   WINDOWS_READONLY_STATUS_SCRIPT,
   type DeviceListResponse,
   type DevicesStatusResponse,
@@ -143,6 +144,21 @@ describe('只读脚本安全与多系统输出解析', () => {
     expect(LINUX_READONLY_STATUS_COMMAND).toContain('/bin/sh -c');
     expect(MACOS_READONLY_STATUS_SCRIPT).not.toContain("'");
     expect(LINUX_READONLY_STATUS_SCRIPT).not.toContain("'");
+  });
+
+  it('Windows 系统识别命令使用 -EncodedCommand、不含字面量 $PSVersionTable 且解码后等于只读脚本', () => {
+    expect(WINDOWS_OS_PROBE_COMMAND).toContain(
+      'powershell -NoProfile -NonInteractive -EncodedCommand ',
+    );
+    expect(WINDOWS_OS_PROBE_COMMAND).toMatch(
+      /^powershell -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/,
+    );
+    expect(WINDOWS_OS_PROBE_COMMAND).not.toContain('$PSVersionTable');
+
+    const base64Part = WINDOWS_OS_PROBE_COMMAND.split('-EncodedCommand ')[1] ?? '';
+    const decoded = Buffer.from(base64Part, 'base64').toString('utf16le');
+    expect(decoded).toBe('$PSVersionTable.PSVersion.Major');
+    expect(decoded).toBe(WINDOWS_OS_PROBE_SCRIPT);
   });
 
   it('正确解析 Windows 输出为统一结构', () => {
@@ -528,6 +544,60 @@ describe('多设备识别、并行采集、缓存复用与测试接口（mock �
     await svc.getDeviceStatus('d-mac', { refresh: true });
     expect(executor).toHaveBeenCalledTimes(2);
     expect(executor.mock.calls[0]?.[0].command).toBe(UNIX_OS_PROBE_COMMAND);
+  });
+
+  it('当 uname 返回空 stdout 且 stderr 包含 PowerShell 报错时仍继续 Windows 探测并成功识别', async () => {
+    writeDevicesFile([
+      {
+        id: 'win-ps-exit1',
+        name: 'Win PowerShell Exit 1',
+        host: '192.0.2.51',
+        port: 22,
+        user: 'demo',
+        keyPath: './secrets/k1',
+        os: 'auto',
+      },
+      {
+        id: 'win-ps-exit0',
+        name: 'Win PowerShell Exit 0',
+        host: '192.0.2.52',
+        port: 22,
+        user: 'demo',
+        keyPath: './secrets/k2',
+        os: 'auto',
+      },
+    ]);
+
+    const psUnameError =
+      "uname : The term 'uname' is not recognized as the name of a cmdlet, function, script file, or operable program.";
+    const executor = vi.fn<SshCommandExecutor>(async (params) => {
+      if (params.command === UNIX_OS_PROBE_COMMAND) {
+        return {
+          code: params.host === '192.0.2.52' ? 0 : 1,
+          stdout: '',
+          stderr: psUnameError,
+        };
+      }
+      if (params.command === WINDOWS_OS_PROBE_COMMAND) {
+        return { code: 0, stdout: '5\r\n', stderr: '' };
+      }
+      return { code: 0, stdout: SAMPLE_WINDOWS_STDOUT, stderr: '' };
+    });
+
+    const svc = createDevicesService(makeConfig({ DEVICE_CACHE_SECONDS: '30' }), {
+      executor,
+      readPrivateKey: async () => TEST_KEY_CONTENT,
+    });
+
+    const result = await svc.getAllStatuses();
+    expect(result.summary).toEqual({ total: 2, online: 2, offline: 0 });
+    expect(result.devices.map((d) => ({ id: d.id, os: d.os, online: d.online }))).toEqual([
+      { id: 'win-ps-exit1', os: 'windows', online: true },
+      { id: 'win-ps-exit0', os: 'windows', online: true },
+    ]);
+    expect(
+      executor.mock.calls.filter(([call]) => call.command === WINDOWS_OS_PROBE_COMMAND),
+    ).toHaveLength(2);
   });
 
   it('多台设备并行采集时一台失败不影响其它，每台独立缓存与并发复用', async () => {
