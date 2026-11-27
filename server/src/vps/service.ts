@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { isIP } from 'node:net';
 import path from 'node:path';
 import { z } from 'zod';
 import { REPO_ROOT, type AppConfig } from '../config/index.js';
@@ -12,6 +13,10 @@ export type VpsFileErrorCode =
 export interface VpsServerRecord {
   id: string;
   name: string;
+  region: string | null;
+  ip: string | null;
+  monthlyTrafficGB: number | null;
+  role: string | null;
   provider: string | null;
   expiresAt: string;
   price: number | null;
@@ -117,6 +122,13 @@ export function calculateVpsLevel(daysLeft: number): VpsLevel {
   return 'ok';
 }
 
+/**
+ * 校验文本是否为合法的 IPv4 或 IPv6 地址。
+ */
+export function isValidIpAddress(value: string): boolean {
+  return isIP(value) !== 0;
+}
+
 function nullableTrimmedString(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -128,6 +140,32 @@ function nullableTrimmedString(value: unknown): string | null | undefined {
 const optionalNullableStringSchema = z.preprocess(
   nullableTrimmedString,
   z.string().nullable().optional(),
+);
+
+const optionalNullableIpSchema = z.preprocess(
+  nullableTrimmedString,
+  z
+    .string()
+    .refine(isValidIpAddress, {
+      message: 'IP 地址格式错误，应为有效的 IPv4 或 IPv6 地址',
+    })
+    .nullable()
+    .optional(),
+);
+
+const optionalNullableMonthlyTrafficSchema = z.preprocess(
+  (value) => {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value === 'string' && value.trim() === '') return null;
+    return value;
+  },
+  z
+    .number({ message: '月流量必须是数字' })
+    .finite('月流量必须是有效数字')
+    .min(0, '月流量不能为负数')
+    .nullable()
+    .optional(),
 );
 
 const optionalNullablePriceSchema = z.preprocess(
@@ -175,6 +213,10 @@ const vpsServerItemSchema = z.object({
     return trimmed === '' ? undefined : trimmed;
   }, z.string().optional()),
   name: z.string({ message: '服务器名称必须填写' }).trim().min(1, '服务器名称不能为空'),
+  region: optionalNullableStringSchema,
+  ip: optionalNullableIpSchema,
+  monthlyTrafficGB: optionalNullableMonthlyTrafficSchema,
+  role: optionalNullableStringSchema,
   provider: optionalNullableStringSchema,
   expiresAt: expiresAtSchema,
   price: optionalNullablePriceSchema,
@@ -241,6 +283,10 @@ function evaluateServerEntry(
     return {
       id: item.id ?? `vps-${index + 1}`,
       name: item.name,
+      region: item.region ?? null,
+      ip: item.ip ?? null,
+      monthlyTrafficGB: item.monthlyTrafficGB ?? null,
+      role: item.role ?? null,
       provider: item.provider ?? null,
       expiresAt: item.expiresAt,
       price: item.price ?? null,
@@ -261,6 +307,10 @@ function evaluateServerEntry(
   return {
     id: extractFallbackString(rawRecord, 'id') ?? `vps-${index + 1}`,
     name: extractFallbackString(rawRecord, 'name') ?? `未命名条目 #${index + 1}`,
+    region: extractFallbackString(rawRecord, 'region'),
+    ip: extractFallbackString(rawRecord, 'ip'),
+    monthlyTrafficGB: extractFallbackNumber(rawRecord, 'monthlyTrafficGB'),
+    role: extractFallbackString(rawRecord, 'role'),
     provider: extractFallbackString(rawRecord, 'provider'),
     expiresAt: extractFallbackString(rawRecord, 'expiresAt') ?? '',
     price: extractFallbackNumber(rawRecord, 'price'),
@@ -302,15 +352,28 @@ function buildSummary(servers: readonly VpsServerView[]): VpsSummary {
   return summary;
 }
 
+function isValidVpsEntry(server: VpsServerView): boolean {
+  return server.daysLeft !== null && server.level !== null && !server.error;
+}
+
+function compareVpsServers(a: VpsServerView, b: VpsServerView): number {
+  const aValid = isValidVpsEntry(a);
+  const bValid = isValidVpsEntry(b);
+  if (aValid && !bValid) return -1;
+  if (!aValid && bValid) return 1;
+  if (!aValid && !bValid) return 0;
+  return (a.daysLeft ?? 0) - (b.daysLeft ?? 0);
+}
+
 function buildResponseFromRawEntries(
   rawEntries: readonly unknown[],
   readonly: boolean,
   timeZone: string,
   nowMs: number,
 ): VpsListResponse {
-  const servers = rawEntries.map((item, index) =>
-    evaluateServerEntry(item, index, nowMs, timeZone),
-  );
+  const servers = rawEntries
+    .map((item, index) => evaluateServerEntry(item, index, nowMs, timeZone))
+    .sort(compareVpsServers);
   return {
     configured: true,
     readonly,
@@ -439,6 +502,10 @@ export function saveVpsList(
   const normalizedServers: VpsServerRecord[] = parsed.data.servers.map((item) => ({
     id: item.id ?? randomUUID(),
     name: item.name,
+    region: item.region ?? null,
+    ip: item.ip ?? null,
+    monthlyTrafficGB: item.monthlyTrafficGB ?? null,
+    role: item.role ?? null,
     provider: item.provider ?? null,
     expiresAt: item.expiresAt,
     price: item.price ?? null,

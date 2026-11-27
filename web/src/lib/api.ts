@@ -264,6 +264,10 @@ export type VpsFileErrorCode =
 export interface VpsServerRecord {
   id: string;
   name: string;
+  region: string | null;
+  ip: string | null;
+  monthlyTrafficGB: number | null;
+  role: string | null;
   provider: string | null;
   expiresAt: string;
   price: number | null;
@@ -299,6 +303,10 @@ export interface VpsListResponse {
 export interface VpsServerInput {
   id?: string;
   name: string;
+  region?: string | null;
+  ip?: string | null;
+  monthlyTrafficGB?: number | null;
+  role?: string | null;
   provider?: string | null;
   expiresAt: string;
   price?: number | null;

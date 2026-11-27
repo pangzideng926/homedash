@@ -2,7 +2,11 @@
   "servers": [
     {
       "id": "demo-vps-1",
-      "name": "示例服务器 A（香港线路）",
+      "name": "香港主节点",
+      "region": "香港",
+      "ip": "192.0.2.10",
+      "monthlyTrafficGB": 1000,
+      "role": "主面板/主线路",
       "provider": "Example Cloud",
       "expiresAt": "2026-12-01",
       "price": 39.9,
@@ -12,17 +16,25 @@
     },
     {
       "id": "demo-vps-2",
-      "name": "示例服务器 B（新加坡）",
+      "name": "轻量实例 B",
+      "region": "新加坡",
+      "ip": "192.0.2.20",
+      "monthlyTrafficGB": 2000,
+      "role": "转发出口",
       "provider": "DemoHost",
       "expiresAt": "2026-12-20",
       "price": 5.5,
       "currency": "USD",
       "renewUrl": "https://portal.example.com/services/demo-vps-2",
-      "note": "轻量应用实例"
+      "note": "轻量应用实例，主要用于亚太方向日常流量转发与备用监控探测，续费前请确认流量重置周期"
     },
     {
       "id": "demo-vps-3",
-      "name": "示例服务器 C（年付备机）",
+      "name": "年付备机 C",
+      "region": "日本",
+      "ip": "192.0.2.30",
+      "monthlyTrafficGB": 500,
+      "role": "备份节点",
       "provider": "Sample Networks",
       "expiresAt": "2027-06-30",
       "price": 199,
